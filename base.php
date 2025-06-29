@@ -927,15 +927,15 @@ getTelegramChannelConfigs($source);
 
 $normals = addStringToBeginning(
     listFilesInDirectory("subscription/normal"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $base64 = addStringToBeginning(
     listFilesInDirectory("subscription/base64"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $hiddify = addStringToBeginning(
     listFilesInDirectory("subscription/hiddify"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $protocolColumn = getFileNamesInDirectory(
     listFilesInDirectory("subscription/normal")
@@ -947,15 +947,15 @@ $cells1Array = convertArrays($protocolColumn, $normals, $base64, $hiddify);
 
 $sourceNormals = addStringToBeginning(
     listFilesInDirectory("subscription/source/normal"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $sourceBase64 = addStringToBeginning(
     listFilesInDirectory("subscription/source/base64"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $sourceHiddify = addStringToBeginning(
     listFilesInDirectory("subscription/source/hiddify"),
-    "https://raw.githubusercontent.com/vpnineh/tlgrm/main/"
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
 );
 $sourcesColumn = getFileNamesInDirectory(
     listFilesInDirectory("subscription/source/normal")
