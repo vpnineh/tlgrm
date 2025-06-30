@@ -5,97 +5,9 @@ ini_set("display_errors", 1);
 ini_set("display_startup_errors", 1);
 error_reporting(E_ERROR | E_PARSE);
 
-function getTelegramChannelConfigs($username)
+function getTheType($input)
 {
-    $sourceArray = explode(",", $username);
-    $mix = "";
-    foreach ($sourceArray as $source) {
-        echo "@{$source} => PROGRESS: 0%\n";
-        $html = file_get_contents("https://t.me/s/" . $source);
-
-        $types = [
-            "vmess",
-            "vless",
-            "trojan",
-            "ss",
-            "tuic",
-            "hysteria",
-            "hysteria2",
-            "hy2",
-        ];
-        $configs = [];
-        foreach ($types as $type) {
-            if ($type === "hy2") {
-                $configs["hysteria2"] = array_merge(
-                    getConfigItems($type, $html),
-                    $configs["hysteria2"]
-                );
-            } else {
-                $configs[$type] = getConfigItems($type, $html);
-            }
-        }
-        echo "@{$source} => PROGRESS: 50%\n";
-        $bySource = [];
-        $byType = [];
-        foreach ($configs as $theType => $configsArray) {
-            foreach ($configsArray as $config) {
-                if (is_valid($config)) {
-                    $fixedConfig = str_replace(
-                        "amp;",
-                        "",
-                        removeAngleBrackets($config)
-                    );
-                    $correctedConfig = correctConfig(
-                        "{$fixedConfig}",
-                        $theType,
-                        $source
-                    );
-                    $mix .= $correctedConfig . "\n";
-                    $$theType .= $correctedConfig . "\n";
-                    $$source .= $correctedConfig . "\n";
-                }
-            }
-        }
-
-        if (!empty(explode("\n", $$source))) {
-            $configsSource =
-                generateUpdateTime() . $$source . generateEndofConfiguration();
-            file_put_contents(
-                "subscription/source/normal/" . $source,
-                $configsSource
-            );
-            file_put_contents(
-                "subscription/source/base64/" . $source,
-                base64_encode($configsSource)
-            );
-            file_put_contents(
-                "subscription/source/hiddify/" . $source,
-                base64_encode(
-                    generateHiddifyTags("@" . $source) . "\n" . $configsSource
-                )
-            );
-            echo "@{$source} => PROGRESS: 100%\n";
-        } else {
-            $username = str_replace($source . ",", "", $username);
-            file_put_contents("source.conf", $username);
-
-            $emptySource = file_get_contents("empty.conf");
-            $emptyArray = explode(",", $emptySource);
-            if (!in_array($source, $emptyArray)) {
-                $emptyArray[] = $source;
-                $emptySource = implode(",", $emptyArray);
-            }
-            file_put_contents("empty.conf", $emptySource);
-
-            removeFileInDirectory("subscription/source/normal/", $source);
-            removeFileInDirectory("subscription/source/base64/", $source);
-            removeFileInDirectory("subscription/source/hiddify/", $source);
-
-            echo "@{$source} => NO CONFIG FOUND, I REMOVED CHANNEL!\n";
-        }
-    }
     $types = [
-        "mix",
         "vmess",
         "vless",
         "trojan",
@@ -103,32 +15,266 @@ function getTelegramChannelConfigs($username)
         "tuic",
         "hysteria",
         "hysteria2",
+        "hy2"
     ];
-    foreach ($types as $filename) {
-        if (!empty(explode("\n", $$filename))) {
-            $configsType =
-                generateUpdateTime() .
-                $$filename .
-                generateEndofConfiguration();
-            file_put_contents("subscription/normal/" . $filename, $configsType);
-            file_put_contents(
-                "subscription/base64/" . $filename,
-                base64_encode($configsType)
-            );
-            file_put_contents(
-                "subscription/hiddify/" . $filename,
-                base64_encode(
-                    generateHiddifyTags(strtoupper($filename)) .
-                        "\n" .
-                        $configsType
-                )
-            );
-            echo "#{$filename} => CREATED SUCCESSFULLY!!\n";
-        } else {
-            removeFileInDirectory("subscription/normal/", $filename);
-            removeFileInDirectory("subscription/base64/", $filename);
-            removeFileInDirectory("subscription/hiddify/", $filename);
-            echo "#{$filename} => WAS EMPTY, I REMOVED IT!\n";
+    foreach ($types as $type) {
+        if (substr($input, 0, strlen($type) + 3) === $type . "://") {
+            if ($type === "hy2") return "hysteria2";
+            return $type;
+        }
+    }
+    return false;
+}
+
+function fetchGitHubContent($owner, $repo, $path, $token)
+{
+    $ch = curl_init();
+
+    $url = "https://api.github.com/repos/$owner/$repo/contents/$path";
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "GET");
+
+    $headers = [];
+    $headers[] = "Accept: application/vnd.github+json";
+    $headers[] = "Authorization: Bearer $token";
+    $headers[] = "X-GitHub-Api-Version: 2022-11-28";
+    $headers[] = "User-Agent: VPNineh"; // Add User-Agent header
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+    $result = curl_exec($ch);
+    if (curl_errno($ch)) {
+        echo "Error:" . curl_error($ch);
+    }
+    curl_close($ch);
+
+    return $result;
+}
+
+function getGitHubFileContent($owner, $repo, $path, $token)
+{
+    $content = json_decode(
+        fetchGitHubContent($owner, $repo, $path, $token),
+        true
+    );
+
+    if (isset($content["content"])) {
+        $output = json_decode(base64_decode($content["content"]), true);
+    }
+
+    return $output;
+}
+
+function modifyString($inputString, $itemToRemove)
+{
+    $array = explode(",", $inputString);
+
+    if (($key = array_search($itemToRemove, $array)) !== false) {
+        unset($array[$key]);
+    }
+
+    $resultString = implode(",", $array);
+
+    return $resultString;
+}
+
+function modifyStringAddItem($inputString, $itemToAdd)
+{
+    $array = explode(",", $inputString);
+
+    if (!in_array($itemToAdd, $array)) {
+        $array[] = $itemToAdd;
+    }
+
+    $resultString = implode(",", $array);
+
+    return $resultString;
+}
+
+function getTelegramChannelConfigs($username)
+{
+    $sourceArray = explode(",", $username);
+    $mix = "";
+    $GIT_TOKEN = getenv("GIT_TOKEN");
+    $locationsArray = [];
+
+    $configs = getGitHubFileContent(
+        "itsyebekhe",
+        "cGrabber",
+        "configs.json",
+        $GIT_TOKEN
+    );
+    
+    echo "Configs Arrived!⚡️\n";
+    if ($configs["status"] === "OK") {
+        unset($configs["status"]);
+        foreach ($configs as $source => $configsArray) {
+            //channel timer
+            $time_start = microtime(true);
+
+            // Limit the configsArray to the first 20 items
+            $limitedConfigsArray = array_slice($configsArray, 0, 20);
+
+            if (!empty($limitedConfigsArray)) {
+                foreach ($limitedConfigsArray as $config) {
+                    $configType = getTheType($config);
+                    $fixedConfig = $config;
+                    $correctedConfigArray = correctConfig(
+                        "{$fixedConfig}",
+                        $configType,
+                        $source
+                    );
+                    if ($correctedConfigArray !== false) {
+                        $configLocation =  getFlags($correctedConfigArray["loc"]) . " " . $correctedConfigArray["loc"];
+                        $correctedConfig = $correctedConfigArray["config"];
+                        $mix .= $correctedConfig . "\n";
+                        $$configType .= $correctedConfig . "\n";
+                        $$source .= $correctedConfig . "\n";
+                        if (!in_array($configLocation, $locationsArray) && $configLocation !== getFlags("") . " ") {
+                            $locationsArray[] = $configLocation;
+                        }
+                        $$configLocation .= $correctedConfig . "\n";
+                    }
+                }
+
+                $configsSource =
+                    generateUpdateTime() .
+                    $$source .
+                    generateEndofConfiguration();
+                file_put_contents(
+                    "subscription/source/normal/" . $source,
+                    $configsSource
+                );
+                file_put_contents(
+                    "subscription/source/base64/" . $source,
+                    base64_encode($configsSource)
+                );
+                file_put_contents(
+                    "subscription/source/hiddify/" . $source,
+                    base64_encode(
+                        generateHiddifyTags("@" . $source) .
+                            "\n" .
+                            $configsSource
+                    )
+                );
+                echo "@{$source} ✅\n";
+            } else {
+                file_put_contents(
+                    "source.conf",
+                    modifyString($username, $source)
+                );
+
+                $emptySource = file_get_contents("empty.conf");
+                file_put_contents(
+                    "empty.conf",
+                    modifyStringAddItem($emptySource, $source)
+                );
+
+                removeFileInDirectory("subscription/source/normal/", $source);
+                removeFileInDirectory("subscription/source/base64/", $source);
+                removeFileInDirectory("subscription/source/hiddify/", $source);
+
+                echo "@{$source} ❌\n";
+            }
+            //channel timer
+            echo "Total channel exec time in seconds: " .
+                (microtime(true) - $time_start) .
+                "\n\n";
+        }
+
+        $types = [
+            "mix",
+            "vmess",
+            "vless",
+            "trojan",
+            "ss",
+            "tuic",
+            "hysteria",
+            "hysteria2",
+        ];
+        foreach ($types as $filename) {
+            // Trim the content and check if it's empty
+            if (empty(trim($$filename))) {
+                removeFileInDirectory("subscription/normal/", $filename);
+                removeFileInDirectory("subscription/base64/", $filename);
+                removeFileInDirectory("subscription/hiddify/", $filename);
+                echo "#{$filename} ❌\n";
+            } else {
+                $configsType =
+                    generateUpdateTime() .
+                    $$filename .
+                    generateEndofConfiguration();
+                file_put_contents(
+                    "subscription/normal/" . $filename,
+                    $configsType
+                );
+                file_put_contents(
+                    "subscription/base64/" . $filename,
+                    base64_encode($configsType)
+                );
+                file_put_contents(
+                    "subscription/hiddify/" . $filename,
+                    base64_encode(
+                        generateHiddifyTags(strtoupper($filename)) .
+                            "\n" .
+                            $configsType
+                    )
+                );
+                echo "#{$filename} ✅\n";
+            }
+        }
+
+        // Check and clean up the location directory
+        $locationFiles = listFilesInDirectory("subscription/location/normal/");
+        foreach ($locationFiles as $filePath) {
+            $fileName = basename($filePath);
+            if (!in_array($fileName, $locationsArray)) {
+                removeFileInDirectory("subscription/location/normal/", $fileName);
+                removeFileInDirectory("subscription/location/base64/", $fileName);
+                removeFileInDirectory("subscription/location/hiddify/", $fileName);
+                echo "#{$fileName} ❌\n";
+            }
+        }
+
+        foreach ($locationsArray as $location) {
+            // Trim the content and check if it's empty
+            if (empty(trim($$location))) {
+                removeFileInDirectory(
+                    "subscription/location/normal/",
+                    $location
+                );
+                removeFileInDirectory(
+                    "subscription/location/base64/",
+                    $location
+                );
+                removeFileInDirectory(
+                    "subscription/location/hiddify/",
+                    $location
+                );
+                echo "#{$location} ❌\n";
+            } else {
+                $configsLocation =
+                    generateUpdateTime() .
+                    $$location .
+                    generateEndofConfiguration();
+                file_put_contents(
+                    "subscription/location/normal/" . $location,
+                    $configsLocation
+                );
+                file_put_contents(
+                    "subscription/location/base64/" . $location,
+                    base64_encode($configsLocation)
+                );
+                file_put_contents(
+                    "subscription/location/hiddify/" . $location,
+                    base64_encode(
+                        generateHiddifyTags(strtoupper($location)) .
+                            "\n" .
+                            $configsLocation
+                    )
+                );
+                echo "#{$location} ✅\n";
+            }
         }
     }
 }
@@ -268,15 +414,6 @@ function addHash($obj)
     return $url;
 }
 
-/*function is_reality($input)
-{
-    $type = detect_type($input);
-    if (stripos($input, "reality") !== false && $type === "vless") {
-        return true;
-    }
-    return false;
-}*/
-
 function removeFileInDirectory($directory, $fileName)
 {
     if (!is_dir($directory)) {
@@ -314,7 +451,7 @@ function generateReadmeTable($titles, $data)
     $table .= $separator;
 
     foreach ($data as $row) {
-        $table .= "| " . implode(" | ", $row) . " |" . PHP_EOL;
+        $table .= "| " . urldecode(implode(" | ", $row)) . " |" . PHP_EOL;
     }
 
     return $table;
@@ -331,7 +468,7 @@ function listFilesInDirectory($directory)
     if ($handle = opendir($directory)) {
         while (false !== ($entry = readdir($handle))) {
             if ($entry != "." && $entry != "..") {
-                $fullPath = $directory . "/" . $entry;
+                $fullPath = $directory . "/" . str_replace("+", "%20", urlencode($entry));
                 if (is_dir($fullPath)) {
                     $filePaths = array_merge(
                         $filePaths,
@@ -423,21 +560,19 @@ function correctConfig($config, $type, $source)
     $configHashName = $configsHashName[$type];
 
     $parsedConfig = configParse($config, $type);
-    $configHashTag = generateName($parsedConfig, $type, $source);
-    $parsedConfig[$configHashName] = $configHashTag;
+    $generateName = generateName($parsedConfig, $type, $source);
+    if ($generateName !== false) {
+        $configLocation = $generateName["loc"];
+        $configHashTag = $generateName["name"];
+        $parsedConfig[$configHashName] = $configHashTag;
 
-    $rebuildedConfig = reparseConfig($parsedConfig, $type);
-    return $rebuildedConfig;
-}
-
-function is_ip($string)
-{
-    $ip_pattern = '/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/';
-    if (preg_match($ip_pattern, $string)) {
-        return true;
-    } else {
-        return false;
+        $rebuildedConfig = reparseConfig($parsedConfig, $type);
+        return [
+            "loc" => $configLocation,
+            "config" => $rebuildedConfig,
+        ];
     }
+    return false;
 }
 
 function maskUrl($url)
@@ -467,108 +602,284 @@ function convertToJson($input)
     return $json;
 }
 
-function ip_info($ip)
+function getIPLocation($ip)
 {
-    // Check if the IP is from Cloudflare
-    /*if (is_cloudflare_ip($ip)) {
-        $traceUrl = "http://$ip/cdn-cgi/trace";
-        $traceData = convertToJson(file_get_contents($traceUrl));
-        $country = $traceData['loc'] ?? "CF";
-        return (object) [
-            "country" => $country,
-        ];
-    }*/
+    $token = getenv("FINDIP_TOKEN");
+    $result = [];
 
-    if (is_ip($ip) === false) {
-        $ip_address_array = dns_get_record($ip, DNS_A);
-        if (empty($ip_address_array)) {
-            return null;
-        }
-        $randomKey = array_rand($ip_address_array);
-        $ip = $ip_address_array[$randomKey]["ip"];
+    $urls = [
+        "iplocation" => "https://api.iplocation.net/?ip={$ip}",
+        "country" => "https://api.country.is/$ip",
+        "findip" => "https://api.findip.net/{$ip}/?token={$token}",
+        "ipapi" => "http://ip-api.com/json/{$ip}",
+        "ipwiki" => "https://ip.wiki/{$ip}/json",
+    ];
+
+    $chs = [];
+    $mh = curl_multi_init();
+
+    foreach ($urls as $apiName => $url) {
+        $chs[$apiName] = curl_init($url);
+        curl_setopt($chs[$apiName], CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($chs[$apiName], CURLOPT_TIMEOUT, 1); // 1 seconds timeout
+        curl_multi_add_handle($mh, $chs[$apiName]);
     }
 
-    // List of API endpoints
-    $endpoints = [
-        "https://ipapi.co/{ip}/json/",
-        "https://ipwhois.app/json/{ip}",
-        "http://www.geoplugin.net/json.gp?ip={ip}",
-        "https://api.ipbase.com/v1/json/{ip}",
-    ];
+    $running = null;
+    do {
+        curl_multi_exec($mh, $running);
+    } while ($running);
 
-    // Initialize an empty result object
-    $result = (object) [
-        "country" => "XX",
-    ];
+    $responses = [];
+    foreach ($chs as $apiName => $ch) {
+        $responses[$apiName] = curl_multi_getcontent($ch);
+        curl_multi_remove_handle($mh, $ch);
+    }
+    curl_multi_close($mh);
 
-    // Loop through each endpoint
-    foreach ($endpoints as $endpoint) {
-        // Construct the full URL
-        $url = str_replace("{ip}", $ip, $endpoint);
+    $locs = [];
+    $errors = [];
 
-        $options = [
-            "http" => [
-                "header" =>
-                    "User-Agent: Mozilla/5.0 (iPad; U; CPU OS 3_2 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Version/4.0.4 Mobile/7B334b Safari/531.21.102011-10-16 20:23:10\r\n", // i.e. An iPad
-            ],
-        ];
-
-        $context = stream_context_create($options);
-        $response = file_get_contents($url, false, $context);
-
-        if ($response !== false) {
-            $data = json_decode($response);
-
-            // Extract relevant information and update the result object
-            if ($endpoint == $endpoints[0]) {
-                // Data from ipapi.co
-                $result->country = $data->country_code ?? "XX";
-            } elseif ($endpoint == $endpoints[1]) {
-                // Data from ipwhois.app
-                $result->country = $data->country_code ?? "XX";
-            } elseif ($endpoint == $endpoints[2]) {
-                // Data from geoplugin.net
-                $result->country = $data->geoplugin_countryCode ?? "XX";
-            } elseif ($endpoint == $endpoints[3]) {
-                // Data from ipbase.com
-                $result->country = $data->country_code ?? "XX";
+    foreach ($responses as $apiName => $apiResponse) {
+        if ($apiResponse !== false) {
+            $data = json_decode($apiResponse, true);
+            switch ($apiName) {
+                case "iplocation":
+                    if (isset($data["country_code2"])) {
+                        $locs[] = [
+                            "loc" => $data["country_code2"],
+                            "cloudflare" => $data["isp"] === "CloudFlare Inc.",
+                        ];
+                    } elseif (
+                        isset($data["response_code"]) &&
+                        ($data["response_code"] === "400" ||
+                            $data["response_code"] === "404")
+                    ) {
+                        $errors[] =
+                            "IP Location API error: " .
+                            ($data["response_message"] ?? "Unknown error");
+                    }
+                    break;
+                case "country":
+                    if (isset($data["country"])) {
+                        $locs[] = [
+                            "loc" => $data["country"],
+                            "cloudflare" => false,
+                        ];
+                    } elseif (isset($data["error"])) {
+                        $errors[] =
+                            "Country API error: " . $data["error"]["message"];
+                    }
+                    break;
+                case "findip":
+                    if (isset($data["country"])) {
+                        $locs[] = [
+                            "loc" => $data["country"]["iso_code"],
+                            "cloudflare" =>
+                                $data["traits"]["organization"] ===
+                                "CloudFlare, Inc.",
+                        ];
+                    } elseif (isset($data["Message"]) || is_null($data)) {
+                        $errors[] =
+                            "FindIP API error: " .
+                            ($data["Message"] ?? "Unknown error");
+                    }
+                    break;
+                case "ipapi":
+                    if (isset($data["countryCode"])) {
+                        $locs[] = [
+                            "loc" => $data["countryCode"],
+                            "cloudflare" => $data["org"] === "CloudFlare, Inc.",
+                        ];
+                    } elseif (isset($data["message"]) || is_null($data)) {
+                        $errors[] =
+                            "IP-API error: " .
+                            ($data["message"] ?? "Unknown error");
+                    }
+                    break;
+                case "ipwiki":
+                    if (isset($data["country_code"])) {
+                        $locs[] = [
+                            "loc" => $data["country_code"],
+                            "cloudflare" =>
+                                $data["asn"]["name"] === "Cloudflare, Inc.",
+                        ];
+                    } elseif (isset($data["error"])) {
+                        $errors[] = "IP Wiki API error: " . $data["error"];
+                    }
+                    break;
             }
-            // Break out of the loop since we found a successful endpoint
-            break;
+        } else {
+            $errors[] = "Failed to fetch {$apiName} information or timed out after 1 second";
         }
+    }
+
+    if (!empty($locs)) {
+        $locCounts = array_count_values(array_column($locs, "loc"));
+        $maxCount = max($locCounts);
+        $mostCommonLocs = array_keys($locCounts, $maxCount);
+
+        if (count($mostCommonLocs) === 1) {
+            $result["loc"] = $mostCommonLocs[0];
+            $result["cloudflare"] = false; // Default to false
+            foreach ($locs as $loc) {
+                if ($loc["loc"] === $mostCommonLocs[0] && $loc["cloudflare"]) {
+                    $result["cloudflare"] = true;
+                    break;
+                }
+            }
+        } else {
+            $cloudflareLocs = array_filter($locs, function ($loc) {
+                return $loc["cloudflare"];
+            });
+            if (!empty($cloudflareLocs)) {
+                $cloudflareLocCounts = array_count_values(
+                    array_column($cloudflareLocs, "loc")
+                );
+                $result["loc"] = array_search(
+                    max($cloudflareLocCounts),
+                    $cloudflareLocCounts
+                );
+                $result["cloudflare"] = true;
+            } else {
+                $result["loc"] = $mostCommonLocs[0];
+                $result["cloudflare"] = false;
+            }
+        }
+
+        $result["ok"] = true;
+        $result["messages"] = $errors;
+    } else {
+        $result["ok"] = false;
+        $result["messages"] = $errors;
     }
 
     return $result;
 }
 
-function is_cloudflare_ip($ip)
+function generateHTMLTable($columnTitles, $columnData)
 {
-    // Get the Cloudflare IP ranges
-    $cloudflare_ranges = file_get_contents(
-        "https://raw.githubusercontent.com/ircfspace/cf-ip-ranges/main/export.ipv4"
-    );
-    $cloudflare_ranges = explode("\n", $cloudflare_ranges);
+    // Start the HTML table with Bootstrap classes
+    $html = '<div class="table-responsive"><table class="table table-striped">' . "\n";
 
-    foreach ($cloudflare_ranges as $range) {
-        if (cidr_match($ip, $range)) {
-            return true;
-        }
+    // Add the table header
+    $html .= "  <thead>" . "\n";
+    $html .= "    <tr>" . "\n";
+    foreach ($columnTitles as $title) {
+        $html .=
+            '      <th scope="col">' .
+            htmlspecialchars($title) .
+            "</th>" .
+            "\n";
     }
+    $html .= "    </tr>" . "\n";
+    $html .= "  </thead>" . "\n";
 
-    return false;
+    // Add the table rows
+    $html .= "  <tbody>" . "\n";
+    foreach ($columnData as $row) {
+        $html .= "    <tr>" . "\n";
+        foreach ($row as $index => $cell) {
+            if ($index == 0) {
+                $html .=
+                    "      <td>" . htmlspecialchars($cell) . "</td>" . "\n";
+            } else {
+                $html .=
+                    '      <td><button class="btn btn-primary btn-copy" data-text="' .
+                    htmlspecialchars($cell) .
+                    '">𝗖𝗢𝗣𝗬 𝗨𝗥𝗟 📎</button></td>' .
+                    "\n";
+            }
+        }
+        $html .= "    </tr>" . "\n";
+    }
+    $html .= "  </tbody>" . "\n";
+
+    // Close the HTML table
+    $html .= "</table></div>" . "\n";
+
+    return $html;
 }
 
-function cidr_match($ip, $range)
+function generateDropdownMenu($columnTitles, $columnData, $selectWhat)
 {
-    list($subnet, $bits) = explode("/", $range);
-    if ($bits === null) {
-        $bits = 32;
+    // Generate a unique identifier for this instance
+    $uniqueId = uniqid();
+
+    // Start the HTML structure
+    $html = '<div class="dropdown-menu-container">' . "\n";
+
+    // Add the first dropdown menu for the first column data
+    $html .= '  <select class="form-select" id="first-dropdown-' . $uniqueId . '">' . "\n";
+    $html .= '    <option value="">Select a ' . $selectWhat . '</option>' . "\n";
+    foreach ($columnData as $row) {
+        $html .= '    <option value="' . htmlspecialchars($row[0]) . '">' . urldecode(htmlspecialchars($row[0])) . '</option>' . "\n";
     }
-    $ip = ip2long($ip);
-    $subnet = ip2long($subnet);
-    $mask = -1 << 32 - $bits;
-    $subnet &= $mask;
-    return ($ip & $mask) == $subnet;
+    $html .= '  </select>' . "\n";
+
+    // Add the second dropdown menu for the titles
+    $html .= '  <select class="form-select mt-3" id="second-dropdown-' . $uniqueId . '" disabled>' . "\n";
+    $html .= '    <option value="">Select a configuration type</option>' . "\n";
+    $html .= '  </select>' . "\n";
+
+    // Add the label to show the related item with Bootstrap styling
+    $html .= '  <div class="input-group mt-3">' . "\n";
+    $html .= '    <input type="text" class="form-control" id="related-item-' . $uniqueId . '" readonly>' . "\n";
+    $html .= '    <button class="btn btn-outline-secondary" type="button" id="copy-button-' . $uniqueId . '">Copy</button>' . "\n";
+    $html .= '  </div>' . "\n";
+
+    // Close the HTML structure
+    $html .= '</div>' . "\n";
+
+    // Add JavaScript to handle the dropdown change and populate the second dropdown
+    $html .= '<script>' . "\n";
+    $html .= '  (function() {' . "\n";
+    $html .= '    var columnData = ' . json_encode($columnData) . ';' . "\n";
+    $html .= '    var columnTitles = ' . json_encode($columnTitles) . ';' . "\n";
+    $html .= '    var firstDropdown = document.getElementById("first-dropdown-' . $uniqueId . '");' . "\n";
+    $html .= '    var secondDropdown = document.getElementById("second-dropdown-' . $uniqueId . '");' . "\n";
+    $html .= '    var relatedItem = document.getElementById("related-item-' . $uniqueId . '");' . "\n";
+    $html .= '    var copyButton = document.getElementById("copy-button-' . $uniqueId . '");' . "\n";
+    $html .= '    firstDropdown.addEventListener("change", function() {' . "\n";
+    $html .= '      var selectedValue = this.value;' . "\n";
+    $html .= '      secondDropdown.innerHTML = \'<option value="">Select a title</option>\';' . "\n";
+    $html .= '      secondDropdown.disabled = true;' . "\n";
+    $html .= '      if (selectedValue) {' . "\n";
+    $html .= '        secondDropdown.disabled = false;' . "\n";
+    $html .= '        var selectedRow = null;' . "\n";
+    $html .= '        for (var i = 0; i < columnData.length; i++) {' . "\n";
+    $html .= '          if (columnData[i][0] === selectedValue) {' . "\n";
+    $html .= '            selectedRow = columnData[i];' . "\n";
+    $html .= '            break;' . "\n";
+    $html .= '          }' . "\n";
+    $html .= '        }' . "\n";
+    $html .= '        if (selectedRow) {' . "\n";
+    $html .= '          for (var j = 1; j < selectedRow.length; j++) {' . "\n";
+    $html .= '            var option = document.createElement("option");' . "\n";
+    $html .= '            option.value = selectedRow[j];' . "\n";
+    $html .= '            option.text = columnTitles[j - 1];' . "\n";
+    $html .= '            secondDropdown.appendChild(option);' . "\n";
+    $html .= '          }' . "\n";
+    $html .= '        }' . "\n";
+    $html .= '      }' . "\n";
+    $html .= '    });' . "\n";
+
+    // Add JavaScript to handle the second dropdown change and show the related item
+    $html .= '    secondDropdown.addEventListener("change", function() {' . "\n";
+    $html .= '      var selectedValue = this.value;' . "\n";
+    $html .= '      relatedItem.value = selectedValue;' . "\n";
+    $html .= '    });' . "\n";
+
+    // Add JavaScript to handle the copy button click
+    $html .= '    copyButton.addEventListener("click", function() {' . "\n";
+    $html .= '      relatedItem.select();' . "\n";
+    $html .= '      document.execCommand("copy");' . "\n";
+    $html .= '      alert("Copied to clipboard: " + relatedItem.value);' . "\n";
+    $html .= '    });' . "\n";
+    $html .= '  })();' . "\n";
+    $html .= '</script>' . "\n";
+
+    return $html;
 }
 
 function getFlags($country_code)
@@ -624,21 +935,23 @@ function generateName($config, $type, $source)
 
     $configIp = $config[$configIpName];
     $configPort = $config[$configPortName];
-    $configLocation = ip_info($configIp)->country ?? "XX";
-    $configFlag =
-        $configLocation === "XX"
-            ? "❔"
-            : ($configLocation === "CF"
-                ? "🚩"
-                : getFlags($configLocation));
-    $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
-    $configType = $configsTypeName[$type];
-    $configNetwork = getNetwork($config, $type);
-    $configTLS = getTLS($config, $type);
-
     $lantency = ping($configIp, $configPort, 1);
+    if ($lantency !== "down") {
+        $getIPLocation = getIPLocation($configIp);
+        $configLocation = $getIPLocation["loc"] ?? "XX";
+        $configFlag =
+            $configLocation === "XX" ? "❔" : getFlags($configLocation);
+        $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
+        $configType = $configsTypeName[$type];
+        $configNetwork = getNetwork($config, $type);
+        $configTLS = getTLS($config, $type);
 
-    return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}";
+        return [
+            "loc" => $configLocation,
+            "name" => "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}",
+        ];
+    }
+    return false;
 }
 
 function getNetwork($config, $type)
@@ -678,7 +991,6 @@ function getTLS($config, $type)
     return null;
 }
 
-
 function isEncrypted($config, $type)
 {
     if (
@@ -714,19 +1026,6 @@ function getConfigItems($prefix, $string)
         }
     }
     return $output;
-}
-
-function is_valid($input)
-{
-    if (stripos($input, "…") !== false or stripos($input, "...") !== false) {
-        return false;
-    }
-    return true;
-}
-
-function removeAngleBrackets($link)
-{
-    return preg_replace("/<.*?>/", "", $link);
 }
 
 function ping($host, $port, $timeout)
@@ -769,7 +1068,7 @@ function sendMessage($botToken, $chatId, $message, $parse_mode, $keyboard)
 
 function generateHiddifyTags($type)
 {
-    $profileTitle = base64_encode("{$type} | HiN 🫧");
+    $profileTitle = base64_encode("{$type} | VPNineh 🫧");
     return "#profile-title: base64:{$profileTitle}\n#profile-update-interval: 1\n#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=2546249531\n#support-url: https://hingroup.t.me\n#profile-web-page-url: https://Here_is_Nowhere.t.me
 ";
 }
@@ -808,26 +1107,19 @@ function gregorianToJalali($gy, $gm, $gd)
 
 function getTehranTime()
 {
-    // Set the timezone to Tehran
     date_default_timezone_set("Asia/Tehran");
 
-    // Get the current date and time in Tehran
     $date = new DateTime();
 
-    // Get the day of the week in English
     $dayOfWeek = $date->format("D");
 
-    // Get the day of the month
     $day = $date->format("d");
 
-    // Get the month and year
     $month = (int) $date->format("m");
     $year = (int) $date->format("Y");
 
-    // Convert Gregorian date to Jalali date
     list($jy, $jm, $jd) = gregorianToJalali($year, $month, $day);
 
-    // Map Persian month names to their short forms
     $monthNames = [
         1 => "FAR",
         2 => "ORD",
@@ -844,10 +1136,8 @@ function getTehranTime()
     ];
     $shortMonth = $monthNames[$jm];
 
-    // Get the time in 24-hour format
     $time = $date->format("H:i");
 
-    // Construct the final formatted string
     $formattedString = sprintf(
         "%s-%02d-%s-%04d 🕑 %s",
         $dayOfWeek,
@@ -882,45 +1172,6 @@ function addStringToBeginning($array, $string)
     return $modifiedArray;
 }
 
-function generateReadme($table1, $table2)
-{
-    $base = "### HiN VPN: Your Gateway to Secure and Free Internet Access
-
-**HiN VPN** stands out as a pioneering open-source project designed to empower users with secure, unrestricted internet access. Unlike traditional VPN services, HiN VPN leverages the Telegram platform to collect and distribute VPN configurations, offering a unique and community-driven approach to online privacy and security.
-    
-#### How It Works
-    
-1. **Telegram Integration**: HiN VPN utilizes a Telegram bot to gather VPN configuration files from contributors. This bot acts as a central hub where users can submit their VPN configurations, ensuring a diverse and robust set of options for subscribers.
-    
-2. **Subscription Link**: Once the configurations are collected, HiN VPN processes them and provides a subscription link. This link is freely accessible to anyone, allowing them to download the latest VPN configurations directly to their devices.
-    
-3. **Open Source**: Being an open-source project, HiN VPN encourages collaboration and transparency. The source code is available for anyone to review, contribute to, or modify, ensuring that the service remains secure and up-to-date with the latest technological advancements.
-    
-4. **PHP Backend**: The backend of HiN VPN is developed using PHP, a widely-used server-side scripting language known for its flexibility and ease of use. This choice of technology ensures that the service can be easily maintained and scaled as needed.
-    
-#### Benefits
-    
-- **Free Access**: HiN VPN is completely free to use, making it an excellent choice for users who are looking for a cost-effective solution to enhance their online privacy.
-- **Community-Driven**: By relying on community contributions, HiN VPN offers a wide range of VPN configurations, ensuring that users have access to a variety of options that suit their specific needs.
-- **Enhanced Security**: The open-source nature of HiN VPN allows for constant scrutiny and improvement, ensuring that the service remains secure and resilient against potential threats.
-- **Easy to Use**: With a simple subscription link, users can quickly and easily set up their VPN connection, making the process accessible to both tech-savvy individuals and newcomers alike.
-    
-#### Subscription Links
-    
-To get started with HiN VPN, simply follow the subscription links provided below. This link will grant you access to the latest VPN configurations, allowing you to secure your internet connection and browse the web with peace of mind.
-    
-" . $table1 . "
-    
-Below is a table that shows the generated subscription links from each source, providing users with a variety of options to choose from.
-    
-" . $table2 . "
-    
-This table provides a quick reference for the different subscription links available through HiN VPN, allowing users to easily select the one that best suits their needs.
-    
-**HiN VPN** is more than just a VPN service; it's a movement towards a more secure and open internet. By leveraging the power of community and open-source technology, HiN VPN is paving the way for a future where online privacy is a fundamental right for all.";
-
-    return $base;
-}
 
 $source = trim(file_get_contents("source.conf"));
 getTelegramChannelConfigs($source);
@@ -941,8 +1192,8 @@ $protocolColumn = getFileNamesInDirectory(
     listFilesInDirectory("subscription/normal")
 );
 
-
 $title1Array = ["Protocol", "Normal", "Base64", "Hiddify"];
+$title1ArrayHtml = ["Normal", "Base64", "Hiddify"];
 $cells1Array = convertArrays($protocolColumn, $normals, $base64, $hiddify);
 
 $sourceNormals = addStringToBeginning(
@@ -962,6 +1213,7 @@ $sourcesColumn = getFileNamesInDirectory(
 );
 
 $title2Array = ["Source", "Normal", "Base64", "Hiddify"];
+$title2ArrayHtml = ["Normal", "Base64", "Hiddify"];
 $cells2Array = convertArrays(
     $sourcesColumn,
     $sourceNormals,
@@ -969,11 +1221,44 @@ $cells2Array = convertArrays(
     $sourceHiddify
 );
 
+$locationNormals = addStringToBeginning(
+    listFilesInDirectory("subscription/location/normal"),
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
+);
+$locationBase64 = addStringToBeginning(
+    listFilesInDirectory("subscription/location/base64"),
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
+);
+$locationHiddify = addStringToBeginning(
+    listFilesInDirectory("subscription/location/hiddify"),
+    "https://raw.githubusercontent.com/vpnineh/tlgrm/refs/heads/main/"
+);
+$locationColumn = getFileNamesInDirectory(
+    listFilesInDirectory("subscription/location/normal")
+);
+
+$title3Array = ["Location", "Normal", "Base64", "Hiddify"];
+$title3ArrayHtml = ["Normal", "Base64", "Hiddify"];
+$cells3Array = convertArrays(
+    $locationColumn,
+    $locationNormals,
+    $locationBase64,
+    $locationHiddify
+);
+
 $table1 = generateReadmeTable($title1Array, $cells1Array);
 $table2 = generateReadmeTable($title2Array, $cells2Array);
+$table3 = generateReadmeTable($title3Array, $cells3Array);
 
-$readmeMdNew = generateReadme($table1, $table2);
+$readmeMdNew = generateReadme($table1, $table2, $table3);
 file_put_contents("README.md", $readmeMdNew);
+
+$drop1Html = generateDropdownMenu($title1ArrayHtml, $cells1Array, "Protocol");
+$drop2Html = generateDropdownMenu($title2ArrayHtml, $cells2Array, "Source");
+$drop3Html = generateDropdownMenu($title3ArrayHtml, $cells3Array, "Location");
+
+$readmeHtmlNew = generateReadmeWeb($drop1Html, $drop2Html, $drop3Html);
+file_put_contents("index.html", $readmeHtmlNew);
 
 $randKey = array_rand($hiddify);
 $randType = $hiddify[$randKey];
@@ -984,37 +1269,20 @@ $keyboard = [
     [
         [
             "text" => "📲 STREISAND",
-            "url" => maskUrl(
-                "streisand://import/" .
-                    $randType
-            ),
+            "url" => maskUrl("streisand://import/" . $randType),
         ],
         [
             "text" => "📲 HIDDIFY",
-            "url" => maskUrl(
-                "hiddify://import/" . 
-                    $randType
-            )
-        ]
-    ],
-    [
-        [
-            "text" => "🚹 گیتهاب HiN VPN 🚹",
-            "url" =>
-                "https://github.com/vpnineh/tlgrm/blob/main/README.md",
+            "url" => maskUrl("hiddify://import/" . $randType),
         ],
-    ],
+    ]
 ];
 
-$message = "🔺 لینک های اشتراک HiN بروزرسانی شدن! 🔻
+$message = "⏱ {$tehranTime}
 
-⏱ آخرین آپدیت: 
-{$tehranTime}
-
+<blockquote>📥 Copy => Import config from Clipboard (<a href='https://github.com/mahsanet/NikaNG/releases/latest'>NikaNG</a>): </blockquote>
+---- 𝗖𝗢𝗣𝗬 ----
 🔎 <code>{$randType}</code>
-
-💥 برای لینک های بیشتر وارد گیتهاب پروژه بشید
-
-🌐 <a href='https://t.me/Here_is_Nowhere'>𝗛.𝗜.𝗡 🫧</a>";
+---- 𝗖𝗢𝗣𝗬 ----
 
 sendMessage($botToken, -1002043507701, $message, "html", $keyboard);
