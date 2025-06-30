@@ -24,10 +24,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r locsort/requirements.txt
+          pip install -r /locsort/requirements.txt
 
       - name: Run the main script
-        run: python locsort/main.py
+        run: python /locsort/main.py
 
       - name: Commit and push changes
         run: |
