@@ -131,6 +131,59 @@ function getTelegramChannelConfigs($username)
             echo "#{$filename} => WAS EMPTY, I REMOVED IT!\n";
         }
     }
+    // Check and clean up the location directory
+        $locationFiles = listFilesInDirectory("subscription/location/normal/");
+        foreach ($locationFiles as $filePath) {
+            $fileName = basename($filePath);
+            if (!in_array($fileName, $locationsArray)) {
+                removeFileInDirectory("subscription/location/normal/", $fileName);
+                removeFileInDirectory("subscription/location/base64/", $fileName);
+                removeFileInDirectory("subscription/location/hiddify/", $fileName);
+                echo "#{$fileName} ❌\n";
+            }
+        }
+
+        foreach ($locationsArray as $location) {
+            // Trim the content and check if it's empty
+            if (empty(trim($$location))) {
+                removeFileInDirectory(
+                    "subscription/location/normal/",
+                    $location
+                );
+                removeFileInDirectory(
+                    "subscription/location/base64/",
+                    $location
+                );
+                removeFileInDirectory(
+                    "subscription/location/hiddify/",
+                    $location
+                );
+                echo "#{$location} ❌\n";
+            } else {
+                $configsLocation =
+                    generateUpdateTime() .
+                    $$location .
+                    generateEndofConfiguration();
+                file_put_contents(
+                    "subscription/location/normal/" . $location,
+                    $configsLocation
+                );
+                file_put_contents(
+                    "subscription/location/base64/" . $location,
+                    base64_encode($configsLocation)
+                );
+                file_put_contents(
+                    "subscription/location/hiddify/" . $location,
+                    base64_encode(
+                        generateHiddifyTags(strtoupper($location)) .
+                            "\n" .
+                            $configsLocation
+                    )
+                );
+                echo "#{$location} ✅\n";
+            }
+        }
+    
 }
 
 function configParse($input, $configType)
