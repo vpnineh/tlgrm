@@ -1,6 +1,12 @@
 name: "VPNineh"
 
 on:
+  push:
+    paths:
+      - 'source.conf'
+  pull_request:
+    paths:
+      - 'source.conf'
   workflow_dispatch:
   schedule:
     - cron: '0 */2 * * *'
