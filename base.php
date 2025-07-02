@@ -713,7 +713,7 @@ function getConfigItems($prefix, $string)
             }
         }
     }
-    return $output;
+    return array_unique($output); // حذف موارد تکراری
 }
 
 function is_valid($input)
