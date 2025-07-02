@@ -31,7 +31,7 @@ function getTelegramChannelConfigs($username)
                     $configs["hysteria2"]
                 );
             } else {
-                $configs[$type] = getConfigItems($type, $html);
+                $configs[$type] = array_unique(getConfigItems($type, $html));
             }
         }
         echo "@{$source} => PROGRESS: 50%\n";
