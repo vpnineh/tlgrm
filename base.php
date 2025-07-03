@@ -11,7 +11,7 @@ function getTelegramChannelConfigs($username)
     $mix = "";
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
-        $html = file_get_contents("https://t.me/s/" . $source);
+        $html = file_get_contents($source);
 
         $types = [
             "vmess",
