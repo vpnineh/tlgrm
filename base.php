@@ -11,7 +11,7 @@ function getTelegramChannelConfigs($username)
     $mix = "";
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
-        $html = file_get_contents(trim($source));
+        $html = file_get_contents("https://t.me/s/" . $source);
 
         $types = [
             "vmess",
@@ -76,7 +76,7 @@ function getTelegramChannelConfigs($username)
             );
             echo "@{$source} => PROGRESS: 100%\n";
         } else {
-            $username = str_replace("X" . ",", "", $username);
+            $username = str_replace($source . ",", "", $username);
             file_put_contents("source.conf", $username);
 
             $emptySource = file_get_contents("empty.conf");
@@ -638,7 +638,7 @@ function generateName($config, $type, $source)
 
     $lantency = ping($configIp, $configPort, 1);
 
-    return "{$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}";
+    return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}";
 }
 
 function getNetwork($config, $type)
