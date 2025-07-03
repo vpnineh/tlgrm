@@ -25,12 +25,7 @@ function getTelegramChannelConfigs($username)
         ];
         $configs = [];
         foreach ($types as $type) {
-            if ($type === "hy2") {
-                $configs["hysteria2"] = array_merge(
-                    getConfigItems($type, $html),
-                    $configs["hysteria2"]
-                );
-            } else {
+            
                 $configs[$type] = array_unique(getConfigItems($type, $html));
             }
         }
