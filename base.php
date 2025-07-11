@@ -490,7 +490,7 @@ function ip_info($ip)
 
     // List of API endpoints
     $endpoints = [
-        "https://ipapi.co/{ip}/json/",
+        "https://ipinfo.io/{ip}/json",
         "https://ipwhois.app/json/{ip}",
         "http://www.geoplugin.net/json.gp?ip={ip}",
         "https://api.ipbase.com/v1/json/{ip}",
