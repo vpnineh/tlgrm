@@ -490,7 +490,7 @@ function ip_info($ip)
 
     // List of API endpoints
     $endpoints = [
-        "https://ipinfo.io/{ip}/json",
+        "https://ipapi.co/{ip}/json/",
         "https://ipwhois.app/json/{ip}",
         "http://www.geoplugin.net/json.gp?ip={ip}",
         "https://api.ipbase.com/v1/json/{ip}",
@@ -982,6 +982,6 @@ $message = "🔺 لینک های اشتراک VPNineh بروزرسانی شدن!
 
 💥 برای لینک های بیشتر وارد گیتهاب پروژه بشید
 
-🌐 <a href='https://t.me/Here_is_Nowhere'>𝗛.𝗜.𝗡 🫧</a>";
+🌐 VPNineh";
 
 sendMessage($botToken, -1002043507701, $message, "html", $keyboard);
