@@ -6,9 +6,72 @@ ini_set("display_startup_errors", 1);
 error_reporting(E_ERROR | E_PARSE);
 
 /**
- * ---------- DEDUP (REAL DUPLICATES) ----------
- * Real-duplicate = same connection identity, regardless of tag/hash/latency.
+ * ========= Telegram pagination helpers (3 pages) =========
  */
+function extractMinPostIdFromTelegramHtml(string $channel, string $html): ?int
+{
+    $ids = [];
+
+    // data-post="channel/12345"
+    if (preg_match_all('~data-post="' . preg_quote($channel, "~") . '/(\d+)"~', $html, $m)) {
+        foreach ($m[1] as $id) $ids[] = (int)$id;
+    }
+
+    // fallback: /channel/12345
+    if (empty($ids) && preg_match_all("~/" . preg_quote($channel, "~") . "/(\d+)~", $html, $m2)) {
+        foreach ($m2[1] as $id) $ids[] = (int)$id;
+    }
+
+    if (empty($ids)) return null;
+
+    return min($ids); // oldest post id in this page
+}
+
+function fetchTelegramChannelHtmlPages(string $channel, int $pages = 3): string
+{
+    $pages = max(1, min(10, $pages));
+    $allHtml = "";
+    $before = null;
+
+    $ctx = stream_context_create([
+        "http" => [
+            "header"  => "User-Agent: Mozilla/5.0\r\n",
+            "timeout" => 15,
+        ],
+    ]);
+
+    for ($p = 1; $p <= $pages; $p++) {
+        $url = "https://t.me/s/" . $channel;
+        if ($before !== null) $url .= "?before=" . $before;
+
+        $html = @file_get_contents($url, false, $ctx);
+        if ($html === false || trim($html) === "") break;
+
+        $allHtml .= "\n<!-- PAGE {$p} -->\n" . $html;
+
+        $minId = extractMinPostIdFromTelegramHtml($channel, $html);
+        if ($minId === null) break;
+
+        $before = $minId;
+
+        // light anti rate-limit
+        usleep(250000); // 0.25s
+    }
+
+    return $allHtml;
+}
+
+/**
+ * ========= REAL DEDUP (across all channels) =========
+ * Build a stable identity key from the actual connection parameters.
+ * Ignores tag/hash/ps/name/fragment differences.
+ */
+function sanitizeConfigString(string $config): string
+{
+    $config = removeAngleBrackets($config);
+    $config = str_replace("amp;", "", $config);
+    return trim($config);
+}
 
 function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
 {
@@ -18,38 +81,36 @@ function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
     $parsed = configParse($clean, $type);
     if (empty($parsed) || !is_array($parsed)) return null;
 
-    // Remove non-identity fields that change run-to-run
+    // VMESS: ignore ps, keep true identity fields
     if ($type === "vmess") {
-        // Keep only fields that define the connection
         $identity = [
-            "v"    => $parsed["v"] ?? "",
-            "id"   => $parsed["id"] ?? "",
-            "aid"  => $parsed["aid"] ?? "",
-            "add"  => $parsed["add"] ?? "",
+            "v"    => $parsed["v"]    ?? "",
+            "id"   => $parsed["id"]   ?? "",
+            "aid"  => $parsed["aid"]  ?? "",
+            "add"  => $parsed["add"]  ?? "",
             "port" => $parsed["port"] ?? "",
-            "net"  => $parsed["net"] ?? "",
+            "net"  => $parsed["net"]  ?? "",
             "type" => $parsed["type"] ?? "",
-            "tls"  => $parsed["tls"] ?? "",
-            "sni"  => $parsed["sni"] ?? "",
+            "tls"  => $parsed["tls"]  ?? "",
+            "sni"  => $parsed["sni"]  ?? "",
             "host" => $parsed["host"] ?? "",
             "path" => $parsed["path"] ?? "",
             "alpn" => $parsed["alpn"] ?? "",
-            "fp"   => $parsed["fp"] ?? "",
-            "scy"  => $parsed["scy"] ?? "",
+            "fp"   => $parsed["fp"]   ?? "",
+            "scy"  => $parsed["scy"]  ?? "",
             "flow" => $parsed["flow"] ?? "",
         ];
-
-        // Sort for stable hashing
         ksort($identity);
         return "vmess:" . md5(json_encode($identity));
     }
 
+    // SS: ignore #name
     if ($type === "ss") {
         $identity = [
-            "server_address"     => $parsed["server_address"] ?? "",
-            "server_port"        => $parsed["server_port"] ?? "",
-            "encryption_method"  => $parsed["encryption_method"] ?? "",
-            "password"           => $parsed["password"] ?? "",
+            "server_address"    => $parsed["server_address"]    ?? "",
+            "server_port"       => $parsed["server_port"]       ?? "",
+            "encryption_method" => $parsed["encryption_method"] ?? "",
+            "password"          => $parsed["password"]          ?? "",
         ];
         ksort($identity);
         return "ss:" . md5(json_encode($identity));
@@ -59,11 +120,11 @@ function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
     $params = $parsed["params"] ?? [];
     if (!is_array($params)) $params = [];
 
-    // Remove fragment-like / non-identity params if they exist
-    // (Keep most params because they may affect connection.)
-    unset($params["remarks"], $params["remark"], $params["name"], $params["hash"], $params["ps"]);
-
-    // Stable order
+    // remove "label-like" query keys if any
+    unset(
+        $params["name"], $params["ps"], $params["hash"],
+        $params["remark"], $params["remarks"], $params["title"]
+    );
     ksort($params);
 
     $identity = [
@@ -74,28 +135,21 @@ function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
         "pass"     => $parsed["pass"] ?? "", // important for tuic
         "params"   => $params,
     ];
-
     return $type . ":" . md5(json_encode($identity));
 }
 
-function sanitizeConfigString(string $config): string
+function ensureDir(string $dir): void
 {
-    $config = removeAngleBrackets($config);
-    $config = str_replace("amp;", "", $config);
-    $config = trim($config);
-    return $config;
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0777, true);
+    }
 }
-
-/**
- * ---------- MAIN ----------
- */
 
 function getTelegramChannelConfigs($username)
 {
     $sourceArray = array_filter(array_map("trim", explode(",", $username)));
-    if (empty($sourceArray)) return;
 
-    // Buckets for outputs
+    // Output buckets (instead of $$variable variables)
     $typeBuckets = [
         "mix" => "",
         "vmess" => "",
@@ -106,25 +160,18 @@ function getTelegramChannelConfigs($username)
         "hysteria" => "",
         "hysteria2" => "",
     ];
+    $sourceBuckets = []; // [source => "configs..."]
 
-    // Per source bucket
-    $sourceBuckets = []; // [source => string]
-
-    // Global dedup map (REAL dedup across all sources & types)
+    // Global seen map: REAL dedup across all sources
     $seen = []; // [dedupKey => true]
 
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
 
-        $html = @file_get_contents("https://t.me/s/" . $source);
-        if ($html === false || trim($html) === "") {
-            // treat as empty source
-            handleEmptySource($source, $username);
-            echo "@{$source} => NO CONFIG FOUND (FETCH FAILED), I REMOVED CHANNEL!\n";
-            continue;
-        }
+        // ✅ NEW: fetch 3 pages
+        $html = fetchTelegramChannelHtmlPages($source, 3);
 
-        $typesToScan = [
+        $types = [
             "vmess",
             "vless",
             "trojan",
@@ -132,36 +179,19 @@ function getTelegramChannelConfigs($username)
             "tuic",
             "hysteria",
             "hysteria2",
-            "hy2", // alias of hysteria2
+            "hy2",
         ];
 
-        // Collect raw configs by type
-        $configs = [
-            "vmess" => [],
-            "vless" => [],
-            "trojan" => [],
-            "ss" => [],
-            "tuic" => [],
-            "hysteria" => [],
-            "hysteria2" => [],
-        ];
-
-        foreach ($typesToScan as $t) {
-            $items = getConfigItems($t, $html);
-
-            if ($t === "hy2") {
-                // merge hy2 into hysteria2 bucket
-                $configs["hysteria2"] = array_merge($configs["hysteria2"], $items);
-            } elseif ($t === "hysteria2") {
-                $configs["hysteria2"] = array_merge($configs["hysteria2"], $items);
+        $configs = [];
+        foreach ($types as $type) {
+            if ($type === "hy2") {
+                $configs["hysteria2"] = array_merge(
+                    getConfigItems($type, $html),
+                    $configs["hysteria2"] ?? []
+                );
             } else {
-                $configs[$t] = array_merge($configs[$t], $items);
+                $configs[$type] = array_unique(getConfigItems($type, $html));
             }
-        }
-
-        // Unique raw strings per type (still text-level)
-        foreach ($configs as $t => $arr) {
-            $configs[$t] = array_values(array_unique($arr));
         }
 
         echo "@{$source} => PROGRESS: 50%\n";
@@ -175,35 +205,34 @@ function getTelegramChannelConfigs($username)
                 $fixedConfig = sanitizeConfigString($config);
                 if ($fixedConfig === "") continue;
 
-                // Build REAL dedup key before tagging/ping/hash changes
+                // ✅ REAL DEDUP before tagging/ping/hash changes
                 $dedupKey = buildDedupKeyFromRawConfig($fixedConfig, $theType);
                 if ($dedupKey === null) continue;
 
                 if (isset($seen[$dedupKey])) {
-                    continue; // REAL duplicate filtered
+                    continue; // real duplicate filtered (across all channels)
                 }
                 $seen[$dedupKey] = true;
 
                 $correctedConfig = correctConfig($fixedConfig, $theType, $source);
 
-                // Append to global buckets
                 $typeBuckets["mix"] .= $correctedConfig . "\n";
                 if (isset($typeBuckets[$theType])) {
                     $typeBuckets[$theType] .= $correctedConfig . "\n";
                 }
 
-                // Append to source bucket
                 $sourceBuckets[$source] .= $correctedConfig . "\n";
             }
         }
 
-        // Write per-source outputs if non-empty (real check)
+        // Write per-source outputs if non-empty
         if (trim($sourceBuckets[$source]) !== "") {
-            $configsSource = generateUpdateTime() . $sourceBuckets[$source] . generateEndofConfiguration();
+            ensureDir("subscription/source/normal");
+            ensureDir("subscription/source/base64");
+            ensureDir("subscription/source/hiddify");
 
-            @mkdir("subscription/source/normal", 0777, true);
-            @mkdir("subscription/source/base64", 0777, true);
-            @mkdir("subscription/source/hiddify", 0777, true);
+            $configsSource =
+                generateUpdateTime() . $sourceBuckets[$source] . generateEndofConfiguration();
 
             file_put_contents("subscription/source/normal/" . $source, $configsSource);
             file_put_contents("subscription/source/base64/" . $source, base64_encode($configsSource));
@@ -214,14 +243,37 @@ function getTelegramChannelConfigs($username)
 
             echo "@{$source} => PROGRESS: 100%\n";
         } else {
-            // No config found after parsing
-            handleEmptySource($source, $username);
+            // ✅ DISABLED: channel removal (as you requested)
+            echo "@{$source} => NO CONFIG FOUND (NOT REMOVED - TEMP DISABLED)\n";
+
+            /*
+            // OLD BEHAVIOR (disabled):
+            $username = str_replace($source . ",", "", $username);
+            file_put_contents("source.conf", $username);
+
+            $emptySource = file_get_contents("empty.conf");
+            $emptyArray = explode(",", $emptySource);
+            if (!in_array($source, $emptyArray)) {
+                $emptyArray[] = $source;
+                $emptySource = implode(",", $emptyArray);
+            }
+            file_put_contents("empty.conf", $emptySource);
+
+            removeFileInDirectory("subscription/source/normal/", $source);
+            removeFileInDirectory("subscription/source/base64/", $source);
+            removeFileInDirectory("subscription/source/hiddify/", $source);
+
             echo "@{$source} => NO CONFIG FOUND, I REMOVED CHANNEL!\n";
+            */
         }
     }
 
     // Write protocol outputs
-    $typesToWrite = [
+    ensureDir("subscription/normal");
+    ensureDir("subscription/base64");
+    ensureDir("subscription/hiddify");
+
+    $typesOut = [
         "mix",
         "vmess",
         "vless",
@@ -232,13 +284,12 @@ function getTelegramChannelConfigs($username)
         "hysteria2",
     ];
 
-    @mkdir("subscription/normal", 0777, true);
-    @mkdir("subscription/base64", 0777, true);
-    @mkdir("subscription/hiddify", 0777, true);
-
-    foreach ($typesToWrite as $filename) {
+    foreach ($typesOut as $filename) {
         if (trim($typeBuckets[$filename]) !== "") {
-            $configsType = generateUpdateTime() . $typeBuckets[$filename] . generateEndofConfiguration();
+            $configsType =
+                generateUpdateTime() .
+                $typeBuckets[$filename] .
+                generateEndofConfiguration();
 
             file_put_contents("subscription/normal/" . $filename, $configsType);
             file_put_contents("subscription/base64/" . $filename, base64_encode($configsType));
@@ -248,51 +299,13 @@ function getTelegramChannelConfigs($username)
             );
             echo "#{$filename} => CREATED SUCCESSFULLY!!\n";
         } else {
-            removeFileInDirectory("subscription/normal", $filename);
-            removeFileInDirectory("subscription/base64", $filename);
-            removeFileInDirectory("subscription/hiddify", $filename);
+            removeFileInDirectory("subscription/normal/", $filename);
+            removeFileInDirectory("subscription/base64/", $filename);
+            removeFileInDirectory("subscription/hiddify/", $filename);
             echo "#{$filename} => WAS EMPTY, I REMOVED IT!\n";
         }
     }
 }
-
-function handleEmptySource(string $source, string $username)
-{
-    // TEMP DISABLED:
-    // فعلاً هیچ کانالی از source.conf حذف نشود و داخل empty.conf ثبت نشود
-    // و فایل‌های مربوطه هم پاک نشوند.
-    return;
-
-    /*
-    // Remove the source from source.conf
-    $username = str_replace($source . ",", "", $username);
-    $username = str_replace("," . $source, "", $username);
-    $username = str_replace($source, "", $username);
-    $username = trim($username, ", \n\r\t");
-
-    file_put_contents("source.conf", $username);
-
-    // Add to empty.conf
-    $emptySource = @file_get_contents("empty.conf");
-    if ($emptySource === false) $emptySource = "";
-    $emptyArray = array_filter(array_map("trim", explode(",", $emptySource)));
-
-    if (!in_array($source, $emptyArray)) {
-        $emptyArray[] = $source;
-    }
-    file_put_contents("empty.conf", implode(",", $emptyArray));
-
-    // Remove files
-    removeFileInDirectory("subscription/source/normal", $source);
-    removeFileInDirectory("subscription/source/base64", $source);
-    removeFileInDirectory("subscription/source/hiddify", $source);
-    */
-}
-
-
-/**
- * ---------- ORIGINAL FUNCTIONS (kept) ----------
- */
 
 function configParse($input, $configType)
 {
@@ -334,9 +347,8 @@ function configParse($input, $configType)
         return $output;
     } elseif ($configType === "ss") {
         $url = parse_url($input);
-        if (!isset($url["user"]) || !isset($url["host"]) || !isset($url["port"])) {
-            return null;
-        }
+        if (!isset($url["user"], $url["host"], $url["port"])) return null;
+
         if (isBase64($url["user"])) {
             $url["user"] = base64_decode($url["user"]);
         }
@@ -348,7 +360,6 @@ function configParse($input, $configType)
         $name = isset($url["fragment"])
             ? urldecode($url["fragment"])
             : "TVC" . getRandomName();
-
         $server = [
             "encryption_method" => $encryption_method,
             "password" => $password,
@@ -440,12 +451,21 @@ function addHash($obj)
 
 function removeFileInDirectory($directory, $fileName)
 {
-    if (!is_dir($directory)) return false;
+    if (!is_dir($directory)) {
+        return false;
+    }
 
     $filePath = rtrim($directory, "/") . "/" . $fileName;
-    if (!file_exists($filePath)) return false;
 
-    return @unlink($filePath);
+    if (!file_exists($filePath)) {
+        return false;
+    }
+
+    if (!@unlink($filePath)) {
+        return false;
+    }
+
+    return true;
 }
 
 function generateReadmeTable($titles, $data)
@@ -595,7 +615,6 @@ function maskUrl($url)
 function convertToJson($input)
 {
     $lines = explode("\n", $input);
-
     $data = [];
 
     foreach ($lines as $line) {
@@ -604,14 +623,11 @@ function convertToJson($input)
         if (count($parts) == 2 && !empty($parts[0]) && !empty($parts[1])) {
             $key = trim($parts[0]);
             $value = trim($parts[1]);
-
             $data[$key] = $value;
         }
     }
 
-    $json = json_encode($data);
-
-    return $json;
+    return json_encode($data);
 }
 
 function ip_info($ip)
@@ -722,16 +738,14 @@ function generateName($config, $type, $source)
     $configIp = $config[$configIpName] ?? "";
     $configPort = $config[$configPortName] ?? "";
 
-    $info = ($configIp !== "") ? ip_info($configIp) : null;
+    $info = $configIp !== "" ? ip_info($configIp) : null;
     $configLocation = $info->country ?? "XX";
-
     $configFlag =
         $configLocation === "XX"
             ? "❔"
             : ($configLocation === "CF"
                 ? "🚩"
                 : getFlags($configLocation));
-
     $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
     $configType = $configsTypeName[$type];
     $configNetwork = getNetwork($config, $type);
@@ -745,10 +759,10 @@ function generateName($config, $type, $source)
 function getNetwork($config, $type)
 {
     if ($type === "vmess") {
-        return strtoupper($config["net"] ?? "");
+        return strtoupper($config["net"] ?? "N/A");
     }
     if (in_array($type, ["vless", "trojan"])) {
-        return strtoupper($config["params"]["type"] ?? "");
+        return strtoupper($config["params"]["type"] ?? "N/A");
     }
     if (in_array($type, ["tuic", "hysteria", "hysteria2", "hy2"])) {
         return "UDP";
@@ -859,7 +873,6 @@ function sendMessage($botToken, $chatId, $message, $parse_mode, $keyboard)
     curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($data));
 
     $response = curl_exec($curl);
-
     curl_close($curl);
 
     echo $response;
@@ -964,9 +977,8 @@ function generateReadme($table1, $table2)
 }
 
 /**
- * ---------- RUN ----------
+ * ========= RUN =========
  */
-
 $source = trim(@file_get_contents("source.conf"));
 getTelegramChannelConfigs($source);
 
