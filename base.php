@@ -5,15 +5,126 @@ ini_set("display_errors", 1);
 ini_set("display_startup_errors", 1);
 error_reporting(E_ERROR | E_PARSE);
 
+/**
+ * ---------- DEDUP (REAL DUPLICATES) ----------
+ * Real-duplicate = same connection identity, regardless of tag/hash/latency.
+ */
+
+function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
+{
+    $clean = sanitizeConfigString($rawConfig);
+    if ($clean === "") return null;
+
+    $parsed = configParse($clean, $type);
+    if (empty($parsed) || !is_array($parsed)) return null;
+
+    // Remove non-identity fields that change run-to-run
+    if ($type === "vmess") {
+        // Keep only fields that define the connection
+        $identity = [
+            "v"    => $parsed["v"] ?? "",
+            "id"   => $parsed["id"] ?? "",
+            "aid"  => $parsed["aid"] ?? "",
+            "add"  => $parsed["add"] ?? "",
+            "port" => $parsed["port"] ?? "",
+            "net"  => $parsed["net"] ?? "",
+            "type" => $parsed["type"] ?? "",
+            "tls"  => $parsed["tls"] ?? "",
+            "sni"  => $parsed["sni"] ?? "",
+            "host" => $parsed["host"] ?? "",
+            "path" => $parsed["path"] ?? "",
+            "alpn" => $parsed["alpn"] ?? "",
+            "fp"   => $parsed["fp"] ?? "",
+            "scy"  => $parsed["scy"] ?? "",
+            "flow" => $parsed["flow"] ?? "",
+        ];
+
+        // Sort for stable hashing
+        ksort($identity);
+        return "vmess:" . md5(json_encode($identity));
+    }
+
+    if ($type === "ss") {
+        $identity = [
+            "server_address"     => $parsed["server_address"] ?? "",
+            "server_port"        => $parsed["server_port"] ?? "",
+            "encryption_method"  => $parsed["encryption_method"] ?? "",
+            "password"           => $parsed["password"] ?? "",
+        ];
+        ksort($identity);
+        return "ss:" . md5(json_encode($identity));
+    }
+
+    // vless / trojan / tuic / hysteria / hysteria2 / hy2
+    $params = $parsed["params"] ?? [];
+    if (!is_array($params)) $params = [];
+
+    // Remove fragment-like / non-identity params if they exist
+    // (Keep most params because they may affect connection.)
+    unset($params["remarks"], $params["remark"], $params["name"], $params["hash"], $params["ps"]);
+
+    // Stable order
+    ksort($params);
+
+    $identity = [
+        "protocol" => $type,
+        "username" => $parsed["username"] ?? "",
+        "hostname" => $parsed["hostname"] ?? "",
+        "port"     => $parsed["port"] ?? "",
+        "pass"     => $parsed["pass"] ?? "", // important for tuic
+        "params"   => $params,
+    ];
+
+    return $type . ":" . md5(json_encode($identity));
+}
+
+function sanitizeConfigString(string $config): string
+{
+    $config = removeAngleBrackets($config);
+    $config = str_replace("amp;", "", $config);
+    $config = trim($config);
+    return $config;
+}
+
+/**
+ * ---------- MAIN ----------
+ */
+
 function getTelegramChannelConfigs($username)
 {
-    $sourceArray = explode(",", $username);
-    $mix = "";
+    $sourceArray = array_filter(array_map("trim", explode(",", $username)));
+    if (empty($sourceArray)) return;
+
+    // Buckets for outputs
+    $typeBuckets = [
+        "mix" => "",
+        "vmess" => "",
+        "vless" => "",
+        "trojan" => "",
+        "ss" => "",
+        "tuic" => "",
+        "hysteria" => "",
+        "hysteria2" => "",
+    ];
+
+    // Per source bucket
+    $sourceBuckets = []; // [source => string]
+
+    // Global dedup map (REAL dedup across all sources & types)
+    $seen = []; // [dedupKey => true]
+
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
-        $html = file_get_contents("https://t.me/s/" . $source);
 
-        $types = [
+        $html = @file_get_contents("https://t.me/s/" . $source);
+        if ($html === false || trim($html) === "") {
+            // treat as empty source
+            handleEmptySource($source, $username);
+            echo "@{$source} => NO CONFIG FOUND (FETCH FAILED), I REMOVED CHANNEL!\n";
+            continue;
+        }
+
+        $typesToScan = [
             "vmess",
             "vless",
             "trojan",
@@ -21,80 +132,96 @@ function getTelegramChannelConfigs($username)
             "tuic",
             "hysteria",
             "hysteria2",
-            "hy2",
+            "hy2", // alias of hysteria2
         ];
-        $configs = [];
-        foreach ($types as $type) {
-            if ($type === "hy2") {
-                $configs["hysteria2"] = array_merge(
-                    getConfigItems($type, $html),
-                    $configs["hysteria2"]
-                );
+
+        // Collect raw configs by type
+        $configs = [
+            "vmess" => [],
+            "vless" => [],
+            "trojan" => [],
+            "ss" => [],
+            "tuic" => [],
+            "hysteria" => [],
+            "hysteria2" => [],
+        ];
+
+        foreach ($typesToScan as $t) {
+            $items = getConfigItems($t, $html);
+
+            if ($t === "hy2") {
+                // merge hy2 into hysteria2 bucket
+                $configs["hysteria2"] = array_merge($configs["hysteria2"], $items);
+            } elseif ($t === "hysteria2") {
+                $configs["hysteria2"] = array_merge($configs["hysteria2"], $items);
             } else {
-                $configs[$type] = array_unique(getConfigItems($type, $html));
+                $configs[$t] = array_merge($configs[$t], $items);
             }
         }
+
+        // Unique raw strings per type (still text-level)
+        foreach ($configs as $t => $arr) {
+            $configs[$t] = array_values(array_unique($arr));
+        }
+
         echo "@{$source} => PROGRESS: 50%\n";
-        $bySource = [];
-        $byType = [];
+
+        $sourceBuckets[$source] = "";
+
         foreach ($configs as $theType => $configsArray) {
             foreach ($configsArray as $config) {
-                if (is_valid($config)) {
-                    $fixedConfig = str_replace(
-                        "amp;",
-                        "",
-                        removeAngleBrackets($config)
-                    );
-                    $correctedConfig = correctConfig(
-                        "{$fixedConfig}",
-                        $theType,
-                        $source
-                    );
-                    $mix .= $correctedConfig . "\n";
-                    $$theType .= $correctedConfig . "\n";
-                    $$source .= $correctedConfig . "\n";
+                if (!is_valid($config)) continue;
+
+                $fixedConfig = sanitizeConfigString($config);
+                if ($fixedConfig === "") continue;
+
+                // Build REAL dedup key before tagging/ping/hash changes
+                $dedupKey = buildDedupKeyFromRawConfig($fixedConfig, $theType);
+                if ($dedupKey === null) continue;
+
+                if (isset($seen[$dedupKey])) {
+                    continue; // REAL duplicate filtered
                 }
+                $seen[$dedupKey] = true;
+
+                $correctedConfig = correctConfig($fixedConfig, $theType, $source);
+
+                // Append to global buckets
+                $typeBuckets["mix"] .= $correctedConfig . "\n";
+                if (isset($typeBuckets[$theType])) {
+                    $typeBuckets[$theType] .= $correctedConfig . "\n";
+                }
+
+                // Append to source bucket
+                $sourceBuckets[$source] .= $correctedConfig . "\n";
             }
         }
 
-        if (!empty(explode("\n", $$source))) {
-            $configsSource =
-                generateUpdateTime() . $$source . generateEndofConfiguration();
-            file_put_contents(
-                "subscription/source/normal/" . $source,
-                $configsSource
-            );
-            file_put_contents(
-                "subscription/source/base64/" . $source,
-                base64_encode($configsSource)
-            );
+        // Write per-source outputs if non-empty (real check)
+        if (trim($sourceBuckets[$source]) !== "") {
+            $configsSource = generateUpdateTime() . $sourceBuckets[$source] . generateEndofConfiguration();
+
+            @mkdir("subscription/source/normal", 0777, true);
+            @mkdir("subscription/source/base64", 0777, true);
+            @mkdir("subscription/source/hiddify", 0777, true);
+
+            file_put_contents("subscription/source/normal/" . $source, $configsSource);
+            file_put_contents("subscription/source/base64/" . $source, base64_encode($configsSource));
             file_put_contents(
                 "subscription/source/hiddify/" . $source,
-                base64_encode(
-                    generateHiddifyTags("@" . $source) . "\n" . $configsSource
-                )
+                base64_encode(generateHiddifyTags("@" . $source) . "\n" . $configsSource)
             );
+
             echo "@{$source} => PROGRESS: 100%\n";
         } else {
-            $username = str_replace($source . ",", "", $username);
-            file_put_contents("source.conf", $username);
-
-            $emptySource = file_get_contents("empty.conf");
-            $emptyArray = explode(",", $emptySource);
-            if (!in_array($source, $emptyArray)) {
-                $emptyArray[] = $source;
-                $emptySource = implode(",", $emptyArray);
-            }
-            file_put_contents("empty.conf", $emptySource);
-
-            removeFileInDirectory("subscription/source/normal/", $source);
-            removeFileInDirectory("subscription/source/base64/", $source);
-            removeFileInDirectory("subscription/source/hiddify/", $source);
-
+            // No config found after parsing
+            handleEmptySource($source, $username);
             echo "@{$source} => NO CONFIG FOUND, I REMOVED CHANNEL!\n";
         }
     }
-    $types = [
+
+    // Write protocol outputs
+    $typesToWrite = [
         "mix",
         "vmess",
         "vless",
@@ -104,34 +231,60 @@ function getTelegramChannelConfigs($username)
         "hysteria",
         "hysteria2",
     ];
-    foreach ($types as $filename) {
-        if (!empty(explode("\n", $$filename))) {
-            $configsType =
-                generateUpdateTime() .
-                $$filename .
-                generateEndofConfiguration();
+
+    @mkdir("subscription/normal", 0777, true);
+    @mkdir("subscription/base64", 0777, true);
+    @mkdir("subscription/hiddify", 0777, true);
+
+    foreach ($typesToWrite as $filename) {
+        if (trim($typeBuckets[$filename]) !== "") {
+            $configsType = generateUpdateTime() . $typeBuckets[$filename] . generateEndofConfiguration();
+
             file_put_contents("subscription/normal/" . $filename, $configsType);
-            file_put_contents(
-                "subscription/base64/" . $filename,
-                base64_encode($configsType)
-            );
+            file_put_contents("subscription/base64/" . $filename, base64_encode($configsType));
             file_put_contents(
                 "subscription/hiddify/" . $filename,
-                base64_encode(
-                    generateHiddifyTags(strtoupper($filename)) .
-                        "\n" .
-                        $configsType
-                )
+                base64_encode(generateHiddifyTags(strtoupper($filename)) . "\n" . $configsType)
             );
             echo "#{$filename} => CREATED SUCCESSFULLY!!\n";
         } else {
-            removeFileInDirectory("subscription/normal/", $filename);
-            removeFileInDirectory("subscription/base64/", $filename);
-            removeFileInDirectory("subscription/hiddify/", $filename);
+            removeFileInDirectory("subscription/normal", $filename);
+            removeFileInDirectory("subscription/base64", $filename);
+            removeFileInDirectory("subscription/hiddify", $filename);
             echo "#{$filename} => WAS EMPTY, I REMOVED IT!\n";
         }
-    }    
+    }
 }
+
+function handleEmptySource(string $source, string $username)
+{
+    // Remove the source from source.conf
+    $username = str_replace($source . ",", "", $username);
+    $username = str_replace("," . $source, "", $username);
+    $username = str_replace($source, "", $username);
+    $username = trim($username, ", \n\r\t");
+
+    file_put_contents("source.conf", $username);
+
+    // Add to empty.conf
+    $emptySource = @file_get_contents("empty.conf");
+    if ($emptySource === false) $emptySource = "";
+    $emptyArray = array_filter(array_map("trim", explode(",", $emptySource)));
+
+    if (!in_array($source, $emptyArray)) {
+        $emptyArray[] = $source;
+    }
+    file_put_contents("empty.conf", implode(",", $emptyArray));
+
+    // Remove files
+    removeFileInDirectory("subscription/source/normal", $source);
+    removeFileInDirectory("subscription/source/base64", $source);
+    removeFileInDirectory("subscription/source/hiddify", $source);
+}
+
+/**
+ * ---------- ORIGINAL FUNCTIONS (kept) ----------
+ */
 
 function configParse($input, $configType)
 {
@@ -173,15 +326,21 @@ function configParse($input, $configType)
         return $output;
     } elseif ($configType === "ss") {
         $url = parse_url($input);
+        if (!isset($url["user"]) || !isset($url["host"]) || !isset($url["port"])) {
+            return null;
+        }
         if (isBase64($url["user"])) {
             $url["user"] = base64_decode($url["user"]);
         }
-        list($encryption_method, $password) = explode(":", $url["user"]);
+        if (strpos($url["user"], ":") === false) return null;
+
+        list($encryption_method, $password) = explode(":", $url["user"], 2);
         $server_address = $url["host"];
         $server_port = $url["port"];
         $name = isset($url["fragment"])
             ? urldecode($url["fragment"])
             : "TVC" . getRandomName();
+
         $server = [
             "encryption_method" => $encryption_method,
             "password" => $password,
@@ -191,6 +350,8 @@ function configParse($input, $configType)
         ];
         return $server;
     }
+
+    return null;
 }
 
 function reparseConfig($configArray, $configType)
@@ -226,12 +387,13 @@ function reparseConfig($configArray, $configType)
         }
         return $url;
     }
+    return null;
 }
 
 function addUsernameAndPassword($obj)
 {
     $url = "";
-    if ($obj["username"] !== "") {
+    if (($obj["username"] ?? "") !== "") {
         $url .= $obj["username"];
         if (isset($obj["pass"]) && $obj["pass"] !== "") {
             $url .= ":" . $obj["pass"];
@@ -268,32 +430,14 @@ function addHash($obj)
     return $url;
 }
 
-/*function is_reality($input)
-{
-    $type = detect_type($input);
-    if (stripos($input, "reality") !== false && $type === "vless") {
-        return true;
-    }
-    return false;
-}*/
-
 function removeFileInDirectory($directory, $fileName)
 {
-    if (!is_dir($directory)) {
-        return false;
-    }
+    if (!is_dir($directory)) return false;
 
-    $filePath = $directory . "/" . $fileName;
+    $filePath = rtrim($directory, "/") . "/" . $fileName;
+    if (!file_exists($filePath)) return false;
 
-    if (!file_exists($filePath)) {
-        return false;
-    }
-
-    if (!unlink($filePath)) {
-        return false;
-    }
-
-    return true;
+    return @unlink($filePath);
 }
 
 function generateReadmeTable($titles, $data)
@@ -390,11 +534,8 @@ function convertArrays()
 
 function isBase64($input)
 {
-    if (base64_encode(base64_decode($input)) === $input) {
-        return true;
-    }
-
-    return false;
+    if ($input === "" || $input === null) return false;
+    return base64_encode(base64_decode($input, true)) === $input;
 }
 
 function getRandomName()
@@ -423,6 +564,8 @@ function correctConfig($config, $type, $source)
     $configHashName = $configsHashName[$type];
 
     $parsedConfig = configParse($config, $type);
+    if ($parsedConfig === null) return $config;
+
     $configHashTag = generateName($parsedConfig, $type, $source);
     $parsedConfig[$configHashName] = $configHashTag;
 
@@ -433,11 +576,7 @@ function correctConfig($config, $type, $source)
 function is_ip($string)
 {
     $ip_pattern = '/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/';
-    if (preg_match($ip_pattern, $string)) {
-        return true;
-    } else {
-        return false;
-    }
+    return preg_match($ip_pattern, $string) === 1;
 }
 
 function maskUrl($url)
@@ -469,18 +608,8 @@ function convertToJson($input)
 
 function ip_info($ip)
 {
-    // Check if the IP is from Cloudflare
-    /*if (is_cloudflare_ip($ip)) {
-        $traceUrl = "http://$ip/cdn-cgi/trace";
-        $traceData = convertToJson(file_get_contents($traceUrl));
-        $country = $traceData['loc'] ?? "CF";
-        return (object) [
-            "country" => $country,
-        ];
-    }*/
-
     if (is_ip($ip) === false) {
-        $ip_address_array = dns_get_record($ip, DNS_A);
+        $ip_address_array = @dns_get_record($ip, DNS_A);
         if (empty($ip_address_array)) {
             return null;
         }
@@ -488,7 +617,6 @@ function ip_info($ip)
         $ip = $ip_address_array[$randomKey]["ip"];
     }
 
-    // List of API endpoints
     $endpoints = [
         "https://ipapi.co/{ip}/json/",
         "https://ipwhois.app/json/{ip}",
@@ -496,79 +624,40 @@ function ip_info($ip)
         "https://api.ipbase.com/v1/json/{ip}",
     ];
 
-    // Initialize an empty result object
     $result = (object) [
         "country" => "XX",
     ];
 
-    // Loop through each endpoint
     foreach ($endpoints as $endpoint) {
-        // Construct the full URL
         $url = str_replace("{ip}", $ip, $endpoint);
 
         $options = [
             "http" => [
                 "header" =>
-                    "User-Agent: Mozilla/5.0 (iPad; U; CPU OS 3_2 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Version/4.0.4 Mobile/7B334b Safari/531.21.102011-10-16 20:23:10\r\n", // i.e. An iPad
+                    "User-Agent: Mozilla/5.0 (iPad; U; CPU OS 3_2 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Version/4.0.4 Mobile/7B334b Safari/531.21.10\r\n",
             ],
         ];
 
         $context = stream_context_create($options);
-        $response = file_get_contents($url, false, $context);
+        $response = @file_get_contents($url, false, $context);
 
         if ($response !== false) {
             $data = json_decode($response);
 
-            // Extract relevant information and update the result object
             if ($endpoint == $endpoints[0]) {
-                // Data from ipapi.co
                 $result->country = $data->country_code ?? "XX";
             } elseif ($endpoint == $endpoints[1]) {
-                // Data from ipwhois.app
                 $result->country = $data->country_code ?? "XX";
             } elseif ($endpoint == $endpoints[2]) {
-                // Data from geoplugin.net
                 $result->country = $data->geoplugin_countryCode ?? "XX";
             } elseif ($endpoint == $endpoints[3]) {
-                // Data from ipbase.com
                 $result->country = $data->country_code ?? "XX";
             }
-            // Break out of the loop since we found a successful endpoint
             break;
         }
     }
 
     return $result;
-}
-
-function is_cloudflare_ip($ip)
-{
-    // Get the Cloudflare IP ranges
-    $cloudflare_ranges = file_get_contents(
-        "https://raw.githubusercontent.com/ircfspace/cf-ip-ranges/main/export.ipv4"
-    );
-    $cloudflare_ranges = explode("\n", $cloudflare_ranges);
-
-    foreach ($cloudflare_ranges as $range) {
-        if (cidr_match($ip, $range)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function cidr_match($ip, $range)
-{
-    list($subnet, $bits) = explode("/", $range);
-    if ($bits === null) {
-        $bits = 32;
-    }
-    $ip = ip2long($ip);
-    $subnet = ip2long($subnet);
-    $mask = -1 << 32 - $bits;
-    $subnet &= $mask;
-    return ($ip & $mask) == $subnet;
 }
 
 function getFlags($country_code)
@@ -622,21 +711,25 @@ function generateName($config, $type, $source)
     $configIpName = $configsIpName[$type];
     $configPortName = $configsPortName[$type];
 
-    $configIp = $config[$configIpName];
-    $configPort = $config[$configPortName];
-    $configLocation = ip_info($configIp)->country ?? "XX";
+    $configIp = $config[$configIpName] ?? "";
+    $configPort = $config[$configPortName] ?? "";
+
+    $info = ($configIp !== "") ? ip_info($configIp) : null;
+    $configLocation = $info->country ?? "XX";
+
     $configFlag =
         $configLocation === "XX"
             ? "❔"
             : ($configLocation === "CF"
                 ? "🚩"
                 : getFlags($configLocation));
+
     $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
     $configType = $configsTypeName[$type];
     $configNetwork = getNetwork($config, $type);
     $configTLS = getTLS($config, $type);
 
-    $lantency = ping($configIp, $configPort, 1);
+    $lantency = ($configIp !== "" && $configPort !== "") ? ping($configIp, $configPort, 1) : "N/A";
 
     return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}";
 }
@@ -644,10 +737,10 @@ function generateName($config, $type, $source)
 function getNetwork($config, $type)
 {
     if ($type === "vmess") {
-        return strtoupper($config["net"]);
+        return strtoupper($config["net"] ?? "");
     }
     if (in_array($type, ["vless", "trojan"])) {
-        return strtoupper($config["params"]["type"]);
+        return strtoupper($config["params"]["type"] ?? "");
     }
     if (in_array($type, ["tuic", "hysteria", "hysteria2", "hy2"])) {
         return "UDP";
@@ -655,36 +748,32 @@ function getNetwork($config, $type)
     if ($type === "ss") {
         return "TCP";
     }
-    return null;
+    return "N/A";
 }
 
 function getTLS($config, $type)
 {
-    if (($type === "vmess" && $config["tls"] === "tls") || $type === "ss") {
+    if (($type === "vmess" && ($config["tls"] ?? "") === "tls") || $type === "ss") {
         return "TLS";
     }
     if (
-        ($type === "vmess" && $config["tls"] === "") ||
-        (in_array($type, ["vless", "trojan"]) &&
-            $config["params"]["security"] === "tls") ||
-        (in_array($type, ["vless", "trojan"]) &&
-            $config["params"]["security"] === "none") ||
-        (in_array($type, ["vless", "trojan"]) &&
-            empty($config["params"]["security"])) ||
+        ($type === "vmess" && ($config["tls"] ?? "") === "") ||
+        (in_array($type, ["vless", "trojan"]) && (($config["params"]["security"] ?? "") === "tls")) ||
+        (in_array($type, ["vless", "trojan"]) && (($config["params"]["security"] ?? "") === "none")) ||
+        (in_array($type, ["vless", "trojan"]) && empty($config["params"]["security"])) ||
         in_array($type, ["tuic", "hysteria", "hysteria2", "hy2"])
     ) {
         return "N/A";
     }
-    return null;
+    return "N/A";
 }
-
 
 function isEncrypted($config, $type)
 {
     if (
         $type === "vmess" &&
-        $config["tls"] !== "" &&
-        $config["scy"] !== "none"
+        ($config["tls"] ?? "") !== "" &&
+        ($config["scy"] ?? "") !== "none"
     ) {
         return true;
     } elseif (
@@ -713,7 +802,7 @@ function getConfigItems($prefix, $string)
             }
         }
     }
-    return array_unique($output); // حذف موارد تکراری
+    return array_unique($output);
 }
 
 function is_valid($input)
@@ -732,10 +821,11 @@ function removeAngleBrackets($link)
 function ping($host, $port, $timeout)
 {
     $tB = microtime(true);
-    $fP = fSockOpen($host, $port, $errno, $errstr, $timeout);
+    $fP = @fsockopen($host, $port, $errno, $errstr, $timeout);
     if (!$fP) {
         return "down";
     }
+    fclose($fP);
     $tA = microtime(true);
     return round(($tA - $tB) * 1000, 0) . "ms";
 }
@@ -764,14 +854,13 @@ function sendMessage($botToken, $chatId, $message, $parse_mode, $keyboard)
 
     curl_close($curl);
 
-    echo /** @scrutinizer ignore-type */ $response;
+    echo $response;
 }
 
 function generateHiddifyTags($type)
 {
     $profileTitle = base64_encode("{$type} | VPNineh 🫧");
-    return "#profile-title: base64:{$profileTitle}\n#profile-update-interval: 1\n#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=2546249531\n
-";
+    return "#profile-title: base64:{$profileTitle}\n#profile-update-interval: 1\n#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=2546249531\n";
 }
 
 function gregorianToJalali($gy, $gm, $gd)
@@ -787,47 +876,37 @@ function gregorianToJalali($gy, $gm, $gd)
     $gy2 = $gm > 2 ? $gy + 1 : $gy;
     $days =
         365 * $gy +
-        ((int) (($gy2 + 3) / 4)) -
-        ((int) (($gy2 + 99) / 100)) +
-        ((int) (($gy2 + 399) / 400)) -
+        ((int)(($gy2 + 3) / 4)) -
+        ((int)(($gy2 + 99) / 100)) +
+        ((int)(($gy2 + 399) / 400)) -
         80 +
         $gd +
         $g_d_m[$gm - 1];
-    $jy += 33 * ((int) ($days / 12053));
+    $jy += 33 * ((int)($days / 12053));
     $days %= 12053;
-    $jy += 4 * ((int) ($days / 1461));
+    $jy += 4 * ((int)($days / 1461));
     $days %= 1461;
     if ($days > 365) {
-        $jy += (int) (($days - 1) / 365);
+        $jy += (int)(($days - 1) / 365);
         $days = ($days - 1) % 365;
     }
-    $jm = $days < 186 ? 1 + (int) ($days / 31) : 7 + (int) (($days - 186) / 30);
+    $jm = $days < 186 ? 1 + (int)($days / 31) : 7 + (int)(($days - 186) / 30);
     $jd = 1 + ($days < 186 ? $days % 31 : ($days - 186) % 30);
     return [$jy, $jm, $jd];
 }
 
 function getTehranTime()
 {
-    // Set the timezone to Tehran
     date_default_timezone_set("Asia/Tehran");
-
-    // Get the current date and time in Tehran
     $date = new DateTime();
 
-    // Get the day of the week in English
     $dayOfWeek = $date->format("D");
-
-    // Get the day of the month
     $day = $date->format("d");
+    $month = (int)$date->format("m");
+    $year = (int)$date->format("Y");
 
-    // Get the month and year
-    $month = (int) $date->format("m");
-    $year = (int) $date->format("Y");
-
-    // Convert Gregorian date to Jalali date
     list($jy, $jm, $jd) = gregorianToJalali($year, $month, $day);
 
-    // Map Persian month names to their short forms
     $monthNames = [
         1 => "FAR",
         2 => "ORD",
@@ -844,26 +923,16 @@ function getTehranTime()
     ];
     $shortMonth = $monthNames[$jm];
 
-    // Get the time in 24-hour format
     $time = $date->format("H:i");
 
-    // Construct the final formatted string
-    $formattedString = sprintf(
-        "%s-%02d-%s-%04d 🕑 %s",
-        $dayOfWeek,
-        $jd,
-        $shortMonth,
-        $jy,
-        $time
-    );
-
-    return $formattedString;
+    return sprintf("%s-%02d-%s-%04d 🕑 %s", $dayOfWeek, $jd, $shortMonth, $jy, $time);
 }
 
 function generateUpdateTime()
 {
     $tehranTime = getTehranTime();
-    return "vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#⚠️%20FREE%20TO%20USE!\nvless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20{$tehranTime}\n";
+    return "vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#⚠️%20FREE%20TO%20USE!\n" .
+        "vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20{$tehranTime}\n";
 }
 
 function generateEndofConfiguration()
@@ -874,22 +943,23 @@ function generateEndofConfiguration()
 function addStringToBeginning($array, $string)
 {
     $modifiedArray = [];
-
     foreach ($array as $item) {
         $modifiedArray[] = $string . $item;
     }
-
     return $modifiedArray;
 }
 
 function generateReadme($table1, $table2)
 {
     $base = "";
-
     return $base;
 }
 
-$source = trim(file_get_contents("source.conf"));
+/**
+ * ---------- RUN ----------
+ */
+
+$source = trim(@file_get_contents("source.conf"));
 getTelegramChannelConfigs($source);
 
 $normals = addStringToBeginning(
@@ -907,7 +977,6 @@ $hiddify = addStringToBeginning(
 $protocolColumn = getFileNamesInDirectory(
     listFilesInDirectory("subscription/normal")
 );
-
 
 $title1Array = ["Protocol", "Normal", "Base64", "Hiddify"];
 $cells1Array = convertArrays($protocolColumn, $normals, $base64, $hiddify);
@@ -951,31 +1020,24 @@ $keyboard = [
     [
         [
             "text" => "📲 STREISAND",
-            "url" => maskUrl(
-                "streisand://import/" .
-                    $randType
-            ),
+            "url" => maskUrl("streisand://import/" . $randType),
         ],
         [
             "text" => "📲 HIDDIFY",
-            "url" => maskUrl(
-                "hiddify://import/" . 
-                    $randType
-            )
-        ]
+            "url" => maskUrl("hiddify://import/" . $randType),
+        ],
     ],
     [
         [
             "text" => "🚹 گیتهاب VPNineh VPN 🚹",
-            "url" =>
-                "https://github.com/vpnineh/tlgrm/blob/main/README.md",
+            "url" => "https://github.com/vpnineh/tlgrm/blob/main/README.md",
         ],
     ],
 ];
 
 $message = "🔺 لینک های اشتراک VPNineh بروزرسانی شدن! 🔻
 
-⏱ آخرین آپدیت: 
+⏱ آخرین آپدیت:
 {$tehranTime}
 
 🔎 <code>{$randType}</code>
