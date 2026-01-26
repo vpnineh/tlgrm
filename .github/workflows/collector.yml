@@ -9,7 +9,7 @@ on:
       - 'source.conf'
   workflow_dispatch:
   schedule:
-    - cron: '0 */1 * * *'
+    - cron: '17 * * * *'
 
 jobs:
   Collect:
