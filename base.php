@@ -258,6 +258,12 @@ function getTelegramChannelConfigs($username)
 
 function handleEmptySource(string $source, string $username)
 {
+    // TEMP DISABLED:
+    // فعلاً هیچ کانالی از source.conf حذف نشود و داخل empty.conf ثبت نشود
+    // و فایل‌های مربوطه هم پاک نشوند.
+    return;
+
+    /*
     // Remove the source from source.conf
     $username = str_replace($source . ",", "", $username);
     $username = str_replace("," . $source, "", $username);
@@ -280,7 +286,9 @@ function handleEmptySource(string $source, string $username)
     removeFileInDirectory("subscription/source/normal", $source);
     removeFileInDirectory("subscription/source/base64", $source);
     removeFileInDirectory("subscription/source/hiddify", $source);
+    */
 }
+
 
 /**
  * ---------- ORIGINAL FUNCTIONS (kept) ----------
