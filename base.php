@@ -27,7 +27,7 @@ function extractMinPostIdFromTelegramHtml(string $channel, string $html): ?int
     return min($ids); // oldest post id in this page
 }
 //page
-function fetchTelegramChannelHtmlPages(string $channel, int $pages = 3): string
+function fetchTelegramChannelHtmlPages(string $channel, int $pages = 4): string
 {
     $pages = max(1, min(10, $pages));
     $allHtml = "";
@@ -169,7 +169,7 @@ function getTelegramChannelConfigs($username)
         echo "@{$source} => PROGRESS: 0%\n";
 
         // page
-        $html = fetchTelegramChannelHtmlPages($source, 3);
+        $html = fetchTelegramChannelHtmlPages($source, 4);
 
         $types = [
             "vmess",
