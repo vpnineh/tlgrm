@@ -168,7 +168,7 @@ function getTelegramChannelConfigs($username)
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
 
-        // page
+        //page
         $html = fetchTelegramChannelHtmlPages($source, 4);
 
         $types = [
