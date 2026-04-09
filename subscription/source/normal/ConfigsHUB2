@@ -1,11 +1,21 @@
 vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#⚠️%20FREE%20TO%20USE!
-vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20Thu-20-FAR-1405 🕑 19:43
-vless://7d4f9ad9-060e-4f12-b957-f4bdee8ed62f@new.sordo.store:443?path=%2F&security=tls&alpn=h2%2Chttp%2F1.1&encryption=none&insecure=0&host=new.sordo.store&fp=chrome&type=ws&allowInsecure=0&sni=new.sordo.store#🆔ConfigsHUB2%20🔒%20VL-WS-N/A%20❔%20XX%20184ms
-vless://b2548603-1030-4f26-854e-a8c8db2880f0@185.143.234.235:80?path=%2F&security=none&encryption=none&host=vixon.portab.org&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20🇮🇷%20IR%2082ms
-vless://06e27e58-997a-499e-9a19-71d4980aaabf@snapp.ir:8080?path=%2F&security=none&encryption=none&host=download2erfan.sudoserver.ir&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20🇮🇷%20IR%20272ms
-vless://70d8031f-28ed-4602-9a76-9e0731b22af3@185.143.235.253:80?path=%2F&security=none&encryption=none&host=ss.oppobot.ir&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20🇮🇷%20IR%202ms
-vless://69025202-5091-4893-8930-f530c6fe50e2@3.70.201.52:25332?security=&encryption=none&headerType=none&type=tcp#🆔ConfigsHUB2%20🔓%20VL-TCP-N/A%20🇩🇪%20DE%20down
-vless://8d4b9b9b-a20f-4ae0-b5fb-1651201a0620@94.184.10.119:1010?security=none&encryption=none&headerType=none&type=tcp#🆔ConfigsHUB2%20🔓%20VL-TCP-N/A%20❔%20XX%20down
-trojan://humanity@188.114.98.0:443?path=%2Fassignment&security=tls&host=www.creationlong.org&type=ws&sni=www.creationlong.org#🆔ConfigsHUB2%20🔒%20TR-WS-N/A%20🇺🇸%20US%209ms
-trojan://humanity@104.21.40.34:443?security=tls&sni=www.gossipglove.com&type=ws&host=www.gossipglove.com&path=%2Fassignment#🆔ConfigsHUB2%20🔒%20TR-WS-N/A%20🇺🇸%20US%209ms
-ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTprMXY1ZzlGZWZkb08=@57.129.140.88:8388#🆔ConfigsHUB2%20🔒%20SS-TCP-TLS%20🇬🇧%20GB%2076ms
+vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20Thu-20-FAR-1405 🕑 21:13
+vmess://eyJhZGQiOiJzdGFyLmRpaWdpbmV0LmlyIiwiYWlkIjoiMCIsImFscG4iOiIiLCJmcCI6IiIsImhvc3QiOiIiLCJpZCI6IjQzMGExZWU5LTU1ZTYtNDcyZi05NWE4LWZhZDI4OGM4YTRmNCIsIm5ldCI6InRjcCIsInBhdGgiOiIiLCJwb3J0IjoiMjQzOTYiLCJwcyI6Ilx1ZDgzY1x1ZGQ5NENvbmZpZ3NIVUIyIFx1ZDgzZFx1ZGQxMyBWTS1UQ1AtTlwvQSBcdTI3NTQgWFggZG93biIsInNjeSI6ImF1dG8iLCJzbmkiOiIiLCJ0bHMiOiIiLCJ0eXBlIjoibm9uZSIsInYiOiIyIn0=
+vless://471640c1-8d5c-4c31-8aba-4a0c5148cd3f@omranpanl.pointspeed.ir:80?security=none&allowInsecure=0&encryption=none&type=httpupgrade#🆔ConfigsHUB2%20🔓%20VL-HTTPUPGRADE-N/A%20❔%20XX%20467ms
+vless://5ed92f6b-a45e-0196-9ab9-b54bdf05fb95@tunn.vpsino.com:2096?security=&encryption=none&host=nobitex.ir&headerType=none&type=tcp#🆔ConfigsHUB2%20🔓%20VL-TCP-N/A%20❔%20XX%20down
+vless://a13dadbe-0938-4537-8b5e-7e9fcdb2e30e@185.143.234.5:443?encryption=none&headerType=none&allowInsecure=0&type=ws&mux=true&security=tls&sni=alef.ir.oadeflantrogm.iranaircdn.com&fp=randomized&path=%2F%3Fed%3D443&host=alef.ir.oadeflantrogm.iranaircdn.com#🆔ConfigsHUB2%20🔒%20VL-WS-N/A%20❔%20XX%20124ms
+vless://dfc018ee-339a-4150-a3e2-a6caaaeec1e9@185.143.233.200:443?encryption=none&headerType=none&allowInsecure=0&type=ws&mux=true&security=tls&sni=alef.ir.oadeflantrogm.abrmahanair.com&fp=randomized&path=%2F%3Fed%3D443&host=alef.ir.oadeflantrogm.abrmahanair.com#🆔ConfigsHUB2%20🔒%20VL-WS-N/A%20❔%20XX%20125ms
+vless://74c5af8f-1801-42a2-99ae-f3e5b7f3258a@non.zabuzabfr.ir:8880?path=%2F&security=&encryption=none&host=non.zabuzabfr.ir&type=httpupgrade#🆔ConfigsHUB2%20🔓%20VL-HTTPUPGRADE-N/A%20❔%20XX%20449ms
+vless://6e3046df-37d2-40e2-af24-281ec3a6ec9f@188.114.98.0:443?mode=auto&path=%2FSoonTeam&security=tls&alpn=h2%2Chttp%2F1.1&encryption=none&insecure=0&host=xso.u3er1.ir&fp=chrome&type=xhttp&allowInsecure=0&sni=xso.u3er1.ir#🆔ConfigsHUB2%20🔒%20VL-XHTTP-N/A%20❔%20XX%209ms
+vless://2271c50f-ac7a-4d7f-8b04-64085b0daa56@45.130.125.160:2052?mode=auto&path=pabloping&security=&encryption=none&host=nlbv1.pabloping.pro&type=xhttp#🆔ConfigsHUB2%20🔓%20VL-XHTTP-N/A%20❔%20XX%209ms
+vless://31b3fa93-788f-43ab-a3bb-ba6e00352fd3@104.21.55.47:2095?path=%3Fed%3D2096&security=&encryption=none&host=aza002.vaslbash.site&type=httpupgrade#🆔ConfigsHUB2%20🔓%20VL-HTTPUPGRADE-N/A%20❔%20XX%209ms
+vless://cff6f361-828a-43c8-a8b5-8d10b32e57fb@188.114.98.0:443?path=%2F&security=tls&alpn=http%2F1.1&encryption=none&insecure=0&host=zh.hollowspot.ir&type=ws&allowInsecure=0&sni=zh.hollowspot.ir#🆔ConfigsHUB2%20🔒%20VL-WS-N/A%20❔%20XX%2010ms
+vless://d827c24a-4c56-4e8e-81c1-8eb5258c1a9d@verso.legion-bot.site:443?path=%2Fvl%2F&security=tls&alpn=http%2F1.1&encryption=none&host=verso.legion-bot.site&type=ws&sni=verso.legion-bot.site#🆔ConfigsHUB2%20🔒%20VL-WS-N/A%20❔%20XX%20130ms
+vless://09932107-63d7-4649-ace6-da42ca4e1a1c@185.143.233.235:80?security=none&encryption=none&host=vixon.portab.org&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20❔%20XX%20124ms
+vless://607c1297-7c8e-49b3-929c-cc7ef533724a@beshkan.elkout.com:37922?security=&encryption=none&headerType=none&type=tcp#🆔ConfigsHUB2%20🔓%20VL-TCP-N/A%20❔%20XX%20down
+vless://459cc637-cbc8-45cd-8bea-6b194256b3ac@185.143.233.200:80?path=%2F%3Fed%3D2080&security=none&encryption=none&host=final.idbede.ir&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20❔%20XX%20130ms
+vless://09932107-63d7-4649-ace6-da42ca4e1a1c@185.143.233.235:80?type=ws&host=vixon.portab.org#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20❔%20XX%20133ms
+vless://a384c715-aeb5-45e8-859b-f687ca6c083f@5.180.97.139:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=google.com&fp=chrome&pbk=wBrGfTI9PaFf966aN6KaCY0cL6QRLlop4nzNa6bJsiQ&sid=9f35da6c9412b832&type=tcp&headerType=none#🆔ConfigsHUB2%20🔒%20VL-TCP-N/A%20❔%20XX%20149ms
+vless://35303066-3536-4561-a334-303162633961@46.38.151.42:3128?path=%2Fus%2Fl%2Fw%2FY3YwGNO9Gl7jnlTD%3Fed%3D2047&security=none&encryption=none&host=mail.nic.ir&type=ws#🆔ConfigsHUB2%20🔓%20VL-WS-N/A%20❔%20XX%20down
+vless://1c7fcc38-e6be-43c5-875f-b8de2516b9f2@5.182.38.91:17267?encryption=none&security=reality&sni=yahoo.com&fp=chrome&pbk=SnWZg6ORcQepuWLI1EVCTTVc4KyfDiGWR4o_CXCMhgk&sid=4ae260&type=tcp&headerType=none#🆔ConfigsHUB2%20🔒%20VL-TCP-N/A%20❔%20XX%20156ms
+trojan://humanity@188.114.98.0:443?path=%2Fassignment&security=tls&host=www.creationlong.org&type=ws&sni=www.creationlong.org#🆔ConfigsHUB2%20🔒%20TR-WS-N/A%20❔%20XX%2010ms
