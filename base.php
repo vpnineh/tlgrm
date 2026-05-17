@@ -26,6 +26,7 @@ function extractMinPostIdFromTelegramHtml(string $channel, string $html): ?int
 
     return min($ids); // oldest post id in this page
 }
+
 //page
 function fetchTelegramChannelHtmlPages(string $channel, int $pages = 2): string
 {
@@ -63,8 +64,6 @@ function fetchTelegramChannelHtmlPages(string $channel, int $pages = 2): string
 
 /**
  * ========= REAL DEDUP (across all channels) =========
- * Build a stable identity key from the actual connection parameters.
- * Ignores tag/hash/ps/name/fragment differences.
  */
 function sanitizeConfigString(string $config): string
 {
@@ -116,11 +115,9 @@ function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
         return "ss:" . md5(json_encode($identity));
     }
 
-    // vless / trojan / tuic / hysteria / hysteria2 / hy2
     $params = $parsed["params"] ?? [];
     if (!is_array($params)) $params = [];
 
-    // remove "label-like" query keys if any
     unset(
         $params["name"], $params["ps"], $params["hash"],
         $params["remark"], $params["remarks"], $params["title"]
@@ -132,7 +129,7 @@ function buildDedupKeyFromRawConfig(string $rawConfig, string $type): ?string
         "username" => $parsed["username"] ?? "",
         "hostname" => $parsed["hostname"] ?? "",
         "port"     => $parsed["port"] ?? "",
-        "pass"     => $parsed["pass"] ?? "", // important for tuic
+        "pass"     => $parsed["pass"] ?? "",
         "params"   => $params,
     ];
     return $type . ":" . md5(json_encode($identity));
@@ -149,7 +146,6 @@ function getTelegramChannelConfigs($username)
 {
     $sourceArray = array_filter(array_map("trim", explode(",", $username)));
 
-    // Output buckets (instead of $$variable variables)
     $typeBuckets = [
         "mix" => "",
         "vmess" => "",
@@ -160,15 +156,13 @@ function getTelegramChannelConfigs($username)
         "hysteria" => "",
         "hysteria2" => "",
     ];
-    $sourceBuckets = []; // [source => "configs..."]
+    $sourceBuckets = []; 
 
-    // Global seen map: REAL dedup across all sources
-    $seen = []; // [dedupKey => true]
+    $seen = []; 
 
     foreach ($sourceArray as $source) {
         echo "@{$source} => PROGRESS: 0%\n";
 
-        //page
         $html = fetchTelegramChannelHtmlPages($source, 2);
 
         $types = [
@@ -205,16 +199,44 @@ function getTelegramChannelConfigs($username)
                 $fixedConfig = sanitizeConfigString($config);
                 if ($fixedConfig === "") continue;
 
-                // ✅ REAL DEDUP before tagging/ping/hash changes
                 $dedupKey = buildDedupKeyFromRawConfig($fixedConfig, $theType);
                 if ($dedupKey === null) continue;
 
                 if (isset($seen[$dedupKey])) {
-                    continue; // real duplicate filtered (across all channels)
+                    continue; 
                 }
                 $seen[$dedupKey] = true;
 
-                $correctedConfig = correctConfig($fixedConfig, $theType, $source);
+                $parsedConfig = configParse($fixedConfig, $theType);
+                if ($parsedConfig === null) continue;
+
+                $configsIpName = [
+                    "vmess" => "add", "vless" => "hostname", "trojan" => "hostname",
+                    "tuic" => "hostname", "hysteria" => "hostname", "hysteria2" => "hostname",
+                    "hy2" => "hostname", "ss" => "server_address"
+                ];
+                $configsPortName = [
+                    "vmess" => "port", "vless" => "port", "trojan" => "port",
+                    "tuic" => "port", "hysteria" => "port", "hysteria2" => "port",
+                    "hy2" => "port", "ss" => "server_port"
+                ];
+
+                $configIpName = $configsIpName[$theType];
+                $configPortName = $configsPortName[$theType];
+
+                $configIp = $parsedConfig[$configIpName] ?? "";
+                $configPort = $parsedConfig[$configPortName] ?? "";
+
+                $latency = ($configIp !== "" && $configPort !== "") ? ping($configIp, $configPort, 1) : "N/A";
+
+                // ==========================================
+                // ✅ فیلتر شرایط ایران: فقط کانفیگ‌های down
+                // ==========================================
+                if ($latency !== "down" && $latency !== "N/A") {
+                    continue; // هر کانفیگی که پینگ موفق داشته باشد را دور می‌ریزیم
+                }
+
+                $correctedConfig = correctConfig($fixedConfig, $theType, $source, $latency);
 
                 $typeBuckets["mix"] .= $correctedConfig . "\n";
                 if (isset($typeBuckets[$theType])) {
@@ -225,7 +247,6 @@ function getTelegramChannelConfigs($username)
             }
         }
 
-        // Write per-source outputs if non-empty
         if (trim($sourceBuckets[$source]) !== "") {
             ensureDir("subscription/source/normal");
             ensureDir("subscription/source/base64");
@@ -243,32 +264,10 @@ function getTelegramChannelConfigs($username)
 
             echo "@{$source} => PROGRESS: 100%\n";
         } else {
-            // ✅ DISABLED: channel removal (as you requested)
             echo "@{$source} => NO CONFIG FOUND (NOT REMOVED - TEMP DISABLED)\n";
-
-            /*
-            // OLD BEHAVIOR (disabled):
-            $username = str_replace($source . ",", "", $username);
-            file_put_contents("source.conf", $username);
-
-            $emptySource = file_get_contents("empty.conf");
-            $emptyArray = explode(",", $emptySource);
-            if (!in_array($source, $emptyArray)) {
-                $emptyArray[] = $source;
-                $emptySource = implode(",", $emptyArray);
-            }
-            file_put_contents("empty.conf", $emptySource);
-
-            removeFileInDirectory("subscription/source/normal/", $source);
-            removeFileInDirectory("subscription/source/base64/", $source);
-            removeFileInDirectory("subscription/source/hiddify/", $source);
-
-            echo "@{$source} => NO CONFIG FOUND, I REMOVED CHANNEL!\n";
-            */
         }
     }
 
-    // Write protocol outputs
     ensureDir("subscription/normal");
     ensureDir("subscription/base64");
     ensureDir("subscription/hiddify");
@@ -577,7 +576,7 @@ function getRandomName()
     return $name;
 }
 
-function correctConfig($config, $type, $source)
+function correctConfig($config, $type, $source, $latency = "N/A")
 {
     $configsHashName = [
         "vmess" => "ps",
@@ -594,17 +593,11 @@ function correctConfig($config, $type, $source)
     $parsedConfig = configParse($config, $type);
     if ($parsedConfig === null) return $config;
 
-    $configHashTag = generateName($parsedConfig, $type, $source);
+    $configHashTag = generateName($parsedConfig, $type, $source, $latency);
     $parsedConfig[$configHashName] = $configHashTag;
 
     $rebuildedConfig = reparseConfig($parsedConfig, $type);
     return $rebuildedConfig;
-}
-
-function is_ip($string)
-{
-    $ip_pattern = '/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/';
-    return preg_match($ip_pattern, $string) === 1;
 }
 
 function maskUrl($url)
@@ -630,76 +623,7 @@ function convertToJson($input)
     return json_encode($data);
 }
 
-function ip_info($ip)
-{
-    if (is_ip($ip) === false) {
-        $ip_address_array = @dns_get_record($ip, DNS_A);
-        if (empty($ip_address_array)) {
-            return null;
-        }
-        $randomKey = array_rand($ip_address_array);
-        $ip = $ip_address_array[$randomKey]["ip"];
-    }
-
-    $endpoints = [
-        "https://ipapi.co/{ip}/json/",
-        "https://ipwhois.app/json/{ip}",
-        "http://www.geoplugin.net/json.gp?ip={ip}",
-        "https://api.ipbase.com/v1/json/{ip}",
-    ];
-
-    $result = (object) [
-        "country" => "XX",
-    ];
-
-    foreach ($endpoints as $endpoint) {
-        $url = str_replace("{ip}", $ip, $endpoint);
-
-        $options = [
-            "http" => [
-                "header" =>
-                    "User-Agent: Mozilla/5.0 (iPad; U; CPU OS 3_2 like Mac OS X; en-us) AppleWebKit/531.21.10 (KHTML, like Gecko) Version/4.0.4 Mobile/7B334b Safari/531.21.10\r\n",
-            ],
-        ];
-
-        $context = stream_context_create($options);
-        $response = @file_get_contents($url, false, $context);
-
-        if ($response !== false) {
-            $data = json_decode($response);
-
-            if ($endpoint == $endpoints[0]) {
-                $result->country = $data->country_code ?? "XX";
-            } elseif ($endpoint == $endpoints[1]) {
-                $result->country = $data->country_code ?? "XX";
-            } elseif ($endpoint == $endpoints[2]) {
-                $result->country = $data->geoplugin_countryCode ?? "XX";
-            } elseif ($endpoint == $endpoints[3]) {
-                $result->country = $data->country_code ?? "XX";
-            }
-            break;
-        }
-    }
-
-    return $result;
-}
-
-function getFlags($country_code)
-{
-    $flag = mb_convert_encoding(
-        "&#" . (127397 + ord($country_code[0])) . ";",
-        "UTF-8",
-        "HTML-ENTITIES"
-    );
-    $flag .= mb_convert_encoding(
-        "&#" . (127397 + ord($country_code[1])) . ";",
-        "UTF-8",
-        "HTML-ENTITIES"
-    );
-    return $flag;
-}
-
-function generateName($config, $type, $source)
+function generateName($config, $type, $source, $latency)
 {
     $configsTypeName = [
         "vmess" => "VM",
@@ -711,49 +635,13 @@ function generateName($config, $type, $source)
         "hy2" => "HY2",
         "ss" => "SS",
     ];
-    $configsIpName = [
-        "vmess" => "add",
-        "vless" => "hostname",
-        "trojan" => "hostname",
-        "tuic" => "hostname",
-        "hysteria" => "hostname",
-        "hysteria2" => "hostname",
-        "hy2" => "hostname",
-        "ss" => "server_address",
-    ];
-    $configsPortName = [
-        "vmess" => "port",
-        "vless" => "port",
-        "trojan" => "port",
-        "tuic" => "port",
-        "hysteria" => "port",
-        "hysteria2" => "port",
-        "hy2" => "port",
-        "ss" => "server_port",
-    ];
 
-    $configIpName = $configsIpName[$type];
-    $configPortName = $configsPortName[$type];
-
-    $configIp = $config[$configIpName] ?? "";
-    $configPort = $config[$configPortName] ?? "";
-
-    $info = $configIp !== "" ? ip_info($configIp) : null;
-    $configLocation = $info->country ?? "XX";
-    $configFlag =
-        $configLocation === "XX"
-            ? "❔"
-            : ($configLocation === "CF"
-                ? "🚩"
-                : getFlags($configLocation));
     $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
     $configType = $configsTypeName[$type];
     $configNetwork = getNetwork($config, $type);
     $configTLS = getTLS($config, $type);
 
-    $lantency = ($configIp !== "" && $configPort !== "") ? ping($configIp, $configPort, 1) : "N/A";
-
-    return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$configFlag} {$configLocation} {$lantency}";
+    return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$latency}";
 }
 
 function getNetwork($config, $type)
