@@ -11,8 +11,11 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 # ================= SETTINGS =================
-# قابلیت پینگ‌گیری و فیلتر کانفیگ‌ها. (برای فعال شدن به "yes" تغییر دهید)
-ENABLE_PING = "no"
+# قابلیت پینگ‌گیری و فیلتر کانفیگ‌ها.
+ENABLE_PING = "yes"
+
+# قابلیت استخراج کشور (تبدیل به پرچم).
+ENABLE_COUNTRY = "yes"
 
 # ================= HELPER FUNCTIONS =================
 
@@ -31,17 +34,26 @@ def remove_file_in_directory(directory, file_name):
     return False
 
 def add_padding_base64(b64_string):
-    """Adds missing padding to a base64 string."""
     return b64_string + "=" * (-len(b64_string) % 4)
 
 def is_base64(s):
-    if not s:
-        return False
+    if not s: return False
     try:
         decoded = base64.b64decode(add_padding_base64(s)).decode('utf-8', errors='ignore')
         re_encoded = base64.b64encode(decoded.encode('utf-8')).decode('utf-8').rstrip('=')
         s_clean = s.rstrip('=')
         return re_encoded == s_clean
+    except Exception:
+        return False
+
+def is_base64_strict(s):
+    # چک کردن دقیق‌تر برای متن‌های بلند (ساب‌اسکریپشن)
+    s = s.strip()
+    if not s or not re.match('^[A-Za-z0-9+/=]+$', s):
+        return False
+    try:
+        base64.b64decode(add_padding_base64(s)).decode('utf-8')
+        return True
     except Exception:
         return False
 
@@ -61,6 +73,41 @@ def ping(host, port, timeout=1):
         return f"{int((end_time - start_time) * 1000)}ms"
     except Exception:
         return "down"
+
+# ================= COUNTRY CACHE =================
+ip_country_cache = {}
+
+def get_country(hostname):
+    if ENABLE_COUNTRY.lower() != "yes":
+        return ""
+        
+    try:
+        ip = socket.gethostbyname(hostname)
+    except Exception:
+        return "🌍" # در صورت عدم تشخیص آی‌پی
+
+    if ip in ip_country_cache:
+        return ip_country_cache[ip]
+
+    try:
+        # استفاده از ip-api برای تشخیص کشور
+        req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=countryCode", headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            cc = data.get("countryCode", "🌍")
+            if cc and cc != "🌍":
+                # تبدیل کد کشور به اموجی پرچم
+                flag = chr(ord(cc[0]) + 127397) + chr(ord(cc[1]) + 127397)
+                ip_country_cache[ip] = flag
+                return flag
+    except urllib.error.HTTPError as e:
+        if e.code == 429: # محدودیت درخواست
+            print("Rate limit hit for IP-API.")
+    except Exception:
+        pass
+        
+    ip_country_cache[ip] = "🌍"
+    return "🌍"
 
 # ================= DATE & TIME =================
 
@@ -91,10 +138,8 @@ def gregorian_to_jalali(gy, gm, gd):
     return jy, jm, jd
 
 def get_tehran_time():
-    # Tehran Timezone: UTC+3:30
     tz = timezone(timedelta(hours=3, minutes=30))
     now = datetime.now(tz)
-    
     gy, gm, gd = now.year, now.month, now.day
     jy, jm, jd = gregorian_to_jalali(gy, gm, gd)
     
@@ -103,7 +148,6 @@ def get_tehran_time():
         7: "MEHR", 8: "ABAN", 9: "AZAR", 10: "DEY", 11: "BAHMAN", 12: "ESFAND"
     }
     short_month = month_names.get(jm, "")
-    
     day_of_week = now.strftime("%a")
     time_str = now.strftime("%H:%M")
     
@@ -121,32 +165,26 @@ def generate_hiddify_tags(config_type):
     profile_title = base64.b64encode(f"{config_type} | VPNineh 🫧".encode('utf-8')).decode('utf-8')
     return f"#profile-title: base64:{profile_title}\n#profile-update-interval: 1\n#subscription-userinfo: upload=0; download=0; total=10737418240000000; expire=2546249531\n"
 
-# ================= TELEGRAM SCRAPING =================
+# ================= SCRAPING & FETCHING =================
 
 def extract_min_post_id_from_telegram_html(channel, html):
     ids = []
-    # Match data-post="channel/12345"
     pattern1 = re.compile(rf'data-post="{re.escape(channel)}/(\d+)"')
     ids.extend([int(x) for x in pattern1.findall(html)])
-    
-    # Fallback match /channel/12345
     if not ids:
         pattern2 = re.compile(rf'/{re.escape(channel)}/(\d+)')
         ids.extend([int(x) for x in pattern2.findall(html)])
-        
     return min(ids) if ids else None
 
 def fetch_telegram_channel_html_pages(channel, pages=2):
     pages = max(1, min(10, pages))
     all_html = ""
     before = None
-    
     headers = {'User-Agent': 'Mozilla/5.0'}
     
     for p in range(1, pages + 1):
         url = f"https://t.me/s/{channel}"
-        if before is not None:
-            url += f"?before={before}"
+        if before is not None: url += f"?before={before}"
             
         try:
             req = urllib.request.Request(url, headers=headers)
@@ -155,32 +193,43 @@ def fetch_telegram_channel_html_pages(channel, pages=2):
         except Exception:
             break
             
-        if not html.strip():
-            break
-            
+        if not html.strip(): break
         all_html += f"\n<!-- PAGE {p} -->\n" + html
         
         min_id = extract_min_post_id_from_telegram_html(channel, html)
-        if min_id is None:
-            break
-            
+        if min_id is None: break
         before = min_id
         time.sleep(0.25)
         
     return all_html
 
-def get_config_items(prefix, html_string):
-    regex = re.compile(r"[a-z]+://\S+", re.IGNORECASE)
-    matches = regex.findall(html_string)
+def fetch_subscription_url(url):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15) as response:
+            content = response.read().decode('utf-8', errors='ignore').strip()
+            
+        if is_base64_strict(content):
+            content = base64.b64decode(add_padding_base64(content)).decode('utf-8', errors='ignore')
+            
+        return content
+    except Exception as e:
+        print(f"Error fetching subscription {url}: {e}")
+        return ""
+
+def extract_configs_from_text(text):
+    regex = re.compile(r"([a-z]+://\S+)", re.IGNORECASE)
+    matches = regex.findall(text)
     
     output = []
     for match in matches:
         new_matches = match.split("<br/>")
         for new_match in new_matches:
-            if new_match.lower().startswith(f"{prefix}://"):
-                output.append(new_match)
-                
-    return list(dict.fromkeys(output)) # Unique items
+            # تمیز کردن تگ‌های HTML در صورت وجود
+            clean_match = re.sub(r"<.*?>", "", new_match)
+            output.append(clean_match)
+            
+    return list(dict.fromkeys(output))
 
 def is_valid(config_input):
     if "…" in config_input or "..." in config_input:
@@ -225,7 +274,6 @@ def config_parse(config_input, config_type):
                 user_part = base64.b64decode(add_padding_base64(user_part)).decode('utf-8', errors='ignore')
                 
             if ":" not in user_part:
-                # Some ss:// links have the entire user@host:port as base64 in the netloc
                 netloc = parsed_url.netloc
                 if is_base64(netloc):
                     decoded_netloc = base64.b64decode(add_padding_base64(netloc)).decode('utf-8', errors='ignore')
@@ -286,7 +334,6 @@ def reparse_config(config_array, config_type):
 def build_dedup_key_from_raw_config(raw_config, config_type):
     clean = sanitize_config_string(raw_config)
     if not clean: return None
-    
     parsed = config_parse(clean, config_type)
     if not parsed or not isinstance(parsed, dict): return None
     
@@ -319,14 +366,10 @@ def build_dedup_key_from_raw_config(raw_config, config_type):
 # ================= NAMING & FORMATTING =================
 
 def get_network(config, config_type):
-    if config_type == "vmess":
-        return str(config.get("net", "N/A")).upper()
-    if config_type in ["vless", "trojan"]:
-        return str(config.get("params", {}).get("type", "N/A")).upper()
-    if config_type in ["tuic", "hysteria", "hysteria2", "hy2"]:
-        return "UDP"
-    if config_type == "ss":
-        return "TCP"
+    if config_type == "vmess": return str(config.get("net", "N/A")).upper()
+    if config_type in ["vless", "trojan"]: return str(config.get("params", {}).get("type", "N/A")).upper()
+    if config_type in ["tuic", "hysteria", "hysteria2", "hy2"]: return "UDP"
+    if config_type == "ss": return "TCP"
     return "N/A"
 
 def get_tls(config, config_type):
@@ -335,17 +378,14 @@ def get_tls(config, config_type):
     return "N/A"
 
 def is_encrypted(config, config_type):
-    if config_type == "vmess" and config.get("tls", "") != "" and config.get("scy", "") != "none":
-        return True
-    if config_type in ["vless", "trojan"] and config.get("params", {}).get("security", "") not in ["", "none"]:
-        return True
-    if config_type in ["ss", "tuic", "hysteria", "hysteria2", "hy2"]:
-        return True
+    if config_type == "vmess" and config.get("tls", "") != "" and config.get("scy", "") != "none": return True
+    if config_type in ["vless", "trojan"] and config.get("params", {}).get("security", "") not in ["", "none"]: return True
+    if config_type in ["ss", "tuic", "hysteria", "hysteria2", "hy2"]: return True
     return False
 
 unique_id_counter = 1
 
-def generate_name(config, config_type, source, latency):
+def generate_name(config, config_type, source, latency, country):
     global unique_id_counter
     
     configs_type_name = {
@@ -362,12 +402,13 @@ def generate_name(config, config_type, source, latency):
     net_str = f"-{config_network}" if config_network not in ["N/A", ""] else ""
     tls_str = f"-{config_tls}" if config_tls not in ["N/A", ""] else ""
     latency_str = f" {latency}" if latency not in ["N/A", ""] else ""
+    country_str = f" {country}" if country else ""
     
-    final_name = f"🆔{source} {is_enc} {c_type}{net_str}{tls_str}-{unique_id_counter}{latency_str}".strip()
+    final_name = f"🆔{source}{country_str} {is_enc} {c_type}{net_str}{tls_str}-{unique_id_counter}{latency_str}".strip()
     unique_id_counter += 1
     return final_name
 
-def correct_config(config_str, config_type, source, latency="N/A"):
+def correct_config(config_str, config_type, source, latency="N/A", country=""):
     configs_hash_name = {
         "vmess": "ps", "vless": "hash", "trojan": "hash", "tuic": "hash",
         "hysteria": "hash", "hysteria2": "hash", "hy2": "hash", "ss": "name"
@@ -377,43 +418,49 @@ def correct_config(config_str, config_type, source, latency="N/A"):
     parsed = config_parse(config_str, config_type)
     if not parsed: return config_str
     
-    parsed[hash_key] = generate_name(parsed, config_type, source, latency)
+    parsed[hash_key] = generate_name(parsed, config_type, source, latency, country)
     return reparse_config(parsed, config_type) or config_str
 
 # ================= MAIN LOGIC =================
 
-def get_telegram_channel_configs(username_str):
-    global ENABLE_PING
-    source_array = [s.strip() for s in username_str.split(",") if s.strip()]
-    
+def process_sources(lines):
     type_buckets = {k: "" for k in ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]}
     source_buckets = {}
     seen = {}
     
-    types = ["vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2", "hy2"]
-    
-    for source in source_array:
-        print(f"@{source} => PROGRESS: 0%")
-        html = fetch_telegram_channel_html_pages(source, 2)
+    for line in lines:
+        is_url = line.startswith("http://") or line.startswith("https://")
+        # تعیین نام منبع برای نمایش در اسم کانفیگ
+        source_name = "SUB" if is_url else line.lstrip("@")
         
+        print(f"[{'URL' if is_url else 'TG'}] {line} => PROGRESS: 0%")
+        
+        if is_url:
+            content = fetch_subscription_url(line)
+            extracted = extract_configs_from_text(content)
+        else:
+            html = fetch_telegram_channel_html_pages(source_name, 2)
+            extracted = extract_configs_from_text(html)
+            
         configs = {t: [] for t in type_buckets}
         configs["hy2"] = []
         
-        for t in types:
-            items = get_config_items(t, html)
-            if t == "hy2":
-                configs["hysteria2"].extend(items)
-            else:
-                configs[t].extend(items)
-                
-        # Deduplicate within lists
+        for config_url in extracted:
+            for t in ["vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2", "hy2"]:
+                if config_url.lower().startswith(f"{t}://"):
+                    if t == "hy2":
+                        configs["hysteria2"].append(config_url)
+                    else:
+                        configs[t].append(config_url)
+                        
         for k in configs: configs[k] = list(dict.fromkeys(configs[k]))
+        print(f"[{source_name}] => PROGRESS: 50%")
         
-        print(f"@{source} => PROGRESS: 50%")
-        source_buckets[source] = ""
-        
+        if source_name not in source_buckets:
+            source_buckets[source_name] = ""
+            
         for the_type, configs_array in configs.items():
-            if the_type == "hy2": continue # Already merged into hysteria2
+            if the_type == "hy2": continue
             
             for config_str in configs_array:
                 if not is_valid(config_str): continue
@@ -445,50 +492,51 @@ def get_telegram_channel_configs(username_str):
                 if ENABLE_PING.lower() == "yes":
                     latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
                     if latency not in ["down", "N/A"]:
-                        continue # Filter Iran conditions: only keep 'down'
+                        continue
                         
-                corrected_config = correct_config(fixed_config, the_type, source, latency)
+                country_flag = get_country(c_ip) if c_ip else ""
+                
+                corrected_config = correct_config(fixed_config, the_type, source_name, latency, country_flag)
                 
                 type_buckets["mix"] += corrected_config + "\n"
                 if the_type in type_buckets:
                     type_buckets[the_type] += corrected_config + "\n"
-                source_buckets[source] += corrected_config + "\n"
+                source_buckets[source_name] += corrected_config + "\n"
                 
-        if source_buckets[source].strip():
+        if source_buckets[source_name].strip():
             ensure_dir("subscription/source/normal")
             ensure_dir("subscription/source/base64")
             ensure_dir("subscription/source/hiddify")
             
-            configs_source = generate_update_time() + source_buckets[source] + generate_end_of_configuration()
+            # ذخیره کردن فایل با نام منبع امن شده
+            safe_source_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', source_name)
             
-            with open(f"subscription/source/normal/{source}", "w", encoding='utf-8') as f:
+            configs_source = generate_update_time() + source_buckets[source_name] + generate_end_of_configuration()
+            
+            with open(f"subscription/source/normal/{safe_source_name}", "w", encoding='utf-8') as f:
                 f.write(configs_source)
-            with open(f"subscription/source/base64/{source}", "w", encoding='utf-8') as f:
+            with open(f"subscription/source/base64/{safe_source_name}", "w", encoding='utf-8') as f:
                 f.write(base64.b64encode(configs_source.encode('utf-8')).decode('utf-8'))
-            with open(f"subscription/source/hiddify/{source}", "w", encoding='utf-8') as f:
-                f.write(base64.b64encode((generate_hiddify_tags(f"@{source}") + "\n" + configs_source).encode('utf-8')).decode('utf-8'))
+            with open(f"subscription/source/hiddify/{safe_source_name}", "w", encoding='utf-8') as f:
+                f.write(base64.b64encode((generate_hiddify_tags(f"@{safe_source_name}") + "\n" + configs_source).encode('utf-8')).decode('utf-8'))
                 
-            print(f"@{source} => PROGRESS: 100%")
+            print(f"[{source_name}] => PROGRESS: 100%")
         else:
-            print(f"@{source} => NO CONFIG FOUND (NOT REMOVED - TEMP DISABLED)")
+            print(f"[{source_name}] => NO CONFIG FOUND")
             
     ensure_dir("subscription/normal")
     ensure_dir("subscription/base64")
     ensure_dir("subscription/hiddify")
     
-    types_out = ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]
-    
-    for filename in types_out:
+    for filename in ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]:
         if type_buckets[filename].strip():
             configs_type = generate_update_time() + type_buckets[filename] + generate_end_of_configuration()
-            
             with open(f"subscription/normal/{filename}", "w", encoding='utf-8') as f:
                 f.write(configs_type)
             with open(f"subscription/base64/{filename}", "w", encoding='utf-8') as f:
                 f.write(base64.b64encode(configs_type.encode('utf-8')).decode('utf-8'))
             with open(f"subscription/hiddify/{filename}", "w", encoding='utf-8') as f:
                 f.write(base64.b64encode((generate_hiddify_tags(filename.upper()) + "\n" + configs_type).encode('utf-8')).decode('utf-8'))
-                
             print(f"#{filename} => CREATED SUCCESSFULLY!!")
         else:
             remove_file_in_directory("subscription/normal", filename)
@@ -501,11 +549,13 @@ def get_telegram_channel_configs(username_str):
 if __name__ == "__main__":
     try:
         with open("source.conf", "r", encoding='utf-8') as f:
-            source_conf = f.read().strip()
+            # خواندن خط به خط و حذف خطوط خالی یا کامنت شده (شروع با #)
+            lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
     except FileNotFoundError:
-        source_conf = "" # Fallback or handle error if file missing
+        print("source.conf not found. Please create one list item per line.")
+        lines = []
 
-    if source_conf:
-        get_telegram_channel_configs(source_conf)
+    if lines:
+        process_sources(lines)
     else:
-        print("source.conf not found or empty.")
+        print("source.conf is empty or not found.")
