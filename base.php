@@ -636,8 +636,13 @@ function convertToJson($input)
     return json_encode($data);
 }
 
+// ==========================================
+// ✅ تابع جدید جایگزین شد
+// ==========================================
 function generateName($config, $type, $source, $latency)
 {
+    static $uniqueId = 1;
+
     $configsTypeName = [
         "vmess" => "VM",
         "vless" => "VL",
@@ -651,10 +656,18 @@ function generateName($config, $type, $source, $latency)
 
     $isEncrypted = isEncrypted($config, $type) ? "🔒" : "🔓";
     $configType = $configsTypeName[$type];
+    
     $configNetwork = getNetwork($config, $type);
     $configTLS = getTLS($config, $type);
 
-    return "🆔{$source} {$isEncrypted} {$configType}-{$configNetwork}-{$configTLS} {$latency}";
+    $netStr = ($configNetwork !== "N/A" && $configNetwork !== "") ? "-{$configNetwork}" : "";
+    $tlsStr = ($configTLS !== "N/A" && $configTLS !== "") ? "-{$configTLS}" : "";
+
+    $finalName = "🆔{$source} {$isEncrypted} {$configType}{$netStr}{$tlsStr}-{$uniqueId} {$latency}";
+    
+    $uniqueId++;
+
+    return $finalName;
 }
 
 function getNetwork($config, $type)
