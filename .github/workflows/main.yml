@@ -3,7 +3,7 @@ name: Auto Update VPN Configs
 on:
   workflow_dispatch: # قابلیت اجرای دستی از پنل گیتهاب
   schedule:
-    - cron: '0/30 * * * *'
+    - cron: '*/30 * * * *'
   push:
     paths:
       - 'source.conf' # اجرای خودکار به محض تغییر و ذخیره فایل source.conf
@@ -29,7 +29,7 @@ jobs:
       - name: Run Config Scraper
         run: |
           # اجرای اسکریپت پایتون
-          python main.py
+          python -u main.py
 
       - name: Commit and Push Changes
         run: |
