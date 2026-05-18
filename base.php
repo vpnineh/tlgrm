@@ -637,7 +637,7 @@ function convertToJson($input)
 }
 
 // ==========================================
-// ✅ تابع جدید جایگزین شد
+// ✅ تابع نهایی بدون هیچگونه N/A
 // ==========================================
 function generateName($config, $type, $source, $latency)
 {
@@ -660,14 +660,19 @@ function generateName($config, $type, $source, $latency)
     $configNetwork = getNetwork($config, $type);
     $configTLS = getTLS($config, $type);
 
+    // حذف N/A برای شبکه و TLS
     $netStr = ($configNetwork !== "N/A" && $configNetwork !== "") ? "-{$configNetwork}" : "";
     $tlsStr = ($configTLS !== "N/A" && $configTLS !== "") ? "-{$configTLS}" : "";
 
-    $finalName = "🆔{$source} {$isEncrypted} {$configType}{$netStr}{$tlsStr}-{$uniqueId} {$latency}";
+    // کنترل نمایش پینگ: اگر N/A بود کلا حذف میشه
+    $latencyStr = ($latency !== "N/A" && trim($latency) !== "") ? " {$latency}" : "";
+
+    // ساخت اسم نهایی
+    $finalName = "🆔{$source} {$isEncrypted} {$configType}{$netStr}{$tlsStr}-{$uniqueId}{$latencyStr}";
     
     $uniqueId++;
 
-    return $finalName;
+    return trim($finalName);
 }
 
 function getNetwork($config, $type)
