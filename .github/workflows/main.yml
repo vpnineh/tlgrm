@@ -4,6 +4,9 @@ on:
   workflow_dispatch: # قابلیت اجرای دستی از پنل گیتهاب
   schedule:
     - cron: '0/30 * * * *'
+  push:
+    paths:
+      - 'source.conf' # اجرای خودکار به محض تغییر و ذخیره فایل source.conf
 
 jobs:
   update-configs:
@@ -26,7 +29,6 @@ jobs:
       - name: Run Config Scraper
         run: |
           # اجرای اسکریپت پایتون
-          # مطمئن شوید که فایل source.conf در کنار اسکریپت وجود دارد
           python main.py
 
       - name: Commit and Push Changes
