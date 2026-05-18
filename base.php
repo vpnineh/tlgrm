@@ -6,6 +6,12 @@ ini_set("display_startup_errors", 1);
 error_reporting(E_ERROR | E_PARSE);
 
 /**
+ * ========= SETTINGS =========
+ */
+// قابلیت پینگ‌گیری و فیلتر کانفیگ‌ها. (برای فعال شدن به "yes" تغییر دهید)
+$ENABLE_PING = "no"; 
+
+/**
  * ========= Telegram pagination helpers (3 pages) =========
  */
 function extractMinPostIdFromTelegramHtml(string $channel, string $html): ?int
@@ -144,6 +150,8 @@ function ensureDir(string $dir): void
 
 function getTelegramChannelConfigs($username)
 {
+    global $ENABLE_PING; // دسترسی به تنظیمات پینگ
+
     $sourceArray = array_filter(array_map("trim", explode(",", $username)));
 
     $typeBuckets = [
@@ -227,13 +235,18 @@ function getTelegramChannelConfigs($username)
                 $configIp = $parsedConfig[$configIpName] ?? "";
                 $configPort = $parsedConfig[$configPortName] ?? "";
 
-                $latency = ($configIp !== "" && $configPort !== "") ? ping($configIp, $configPort, 1) : "N/A";
+                $latency = "N/A";
+                
+                // بررسی روشن یا خاموش بودن قابلیت پینگ
+                if (strtolower($ENABLE_PING) === "yes") {
+                    $latency = ($configIp !== "" && $configPort !== "") ? ping($configIp, $configPort, 1) : "N/A";
 
-                // ==========================================
-                // ✅ فیلتر شرایط ایران: فقط کانفیگ‌های down
-                // ==========================================
-                if ($latency !== "down" && $latency !== "N/A") {
-                    continue; // هر کانفیگی که پینگ موفق داشته باشد را دور می‌ریزیم
+                    // ==========================================
+                    // ✅ فیلتر شرایط ایران: فقط کانفیگ‌های down
+                    // ==========================================
+                    if ($latency !== "down" && $latency !== "N/A") {
+                        continue; // هر کانفیگی که پینگ موفق داشته باشد را دور می‌ریزیم
+                    }
                 }
 
                 $correctedConfig = correctConfig($fixedConfig, $theType, $source, $latency);
