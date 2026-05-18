@@ -13,12 +13,11 @@ import concurrent.futures
 from datetime import datetime, timezone, timedelta
 
 # ================= SETTINGS =================
-ENABLE_PING = "yes"
-ENABLE_COUNTRY = "yes"
-MAX_WORKERS = 25  # تعداد تسک‌های همزمان
+ENABLE_PING = "yes"          # 'yes' برای نگه داشتن فقط آی‌پی‌های فیلتر شده (تایم‌اوت)
+ENABLE_COUNTRY = "yes"      # 'yes' برای استخراج پرچم کشور
+MAX_WORKERS = 10             # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
 
 # ================= THREAD LOCKS =================
-# برای جلوگیری از تداخل تسک‌های همزمان هنگام ثبت داده‌های مشترک
 lock = threading.Lock()
 
 # ================= HELPER FUNCTIONS =================
@@ -95,11 +94,13 @@ def get_country(hostname):
             return ip_country_cache[ip]
 
     try:
-        req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=countryCode", headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=3) as response:
+        # استفاده از API رایگان IPLocation (بدون نیاز به کلید و لیمیت کمتر)
+        req = urllib.request.Request(f"https://api.iplocation.net/?ip={ip}", headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=2) as response:
             data = json.loads(response.read().decode('utf-8'))
-            cc = data.get("countryCode", "🌍")
-            if cc and cc != "🌍":
+            cc = data.get("country_code2", "🌍")
+            
+            if cc and cc != "🌍" and cc != "-":
                 flag = chr(ord(cc[0]) + 127397) + chr(ord(cc[1]) + 127397)
                 with cache_lock:
                     ip_country_cache[ip] = flag
@@ -190,7 +191,7 @@ def fetch_telegram_channel_html_pages(channel, pages=2):
             
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 html = response.read().decode('utf-8', errors='ignore')
         except Exception:
             break
@@ -201,14 +202,14 @@ def fetch_telegram_channel_html_pages(channel, pages=2):
         min_id = extract_min_post_id_from_telegram_html(channel, html)
         if min_id is None: break
         before = min_id
-        time.sleep(0.25)
+        time.sleep(0.5) 
         
     return all_html
 
 def fetch_subscription_url(url):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             content = response.read().decode('utf-8', errors='ignore').strip()
             
         if is_base64_strict(content):
@@ -216,7 +217,7 @@ def fetch_subscription_url(url):
             
         return content
     except Exception as e:
-        print(f"Error fetching subscription {url}: {e}")
+        print(f"Error fetching subscription {url}: {e}", flush=True)
         return ""
 
 def extract_configs_from_text(text):
@@ -405,7 +406,6 @@ def generate_name(config, config_type, source, latency, country):
     latency_str = f" {latency}" if latency not in ["N/A", ""] else ""
     country_str = f" {country}" if country else ""
     
-    # برای امنیت در چندنخی، شناسه یکتا رو با قفل می‌گیریم
     with lock:
         current_id = unique_id_counter
         unique_id_counter += 1
@@ -428,7 +428,6 @@ def correct_config(config_str, config_type, source, latency="N/A", country=""):
 
 # ================= MAIN LOGIC =================
 
-# متغیرهای مشترک (Shared State) که بین تسک‌ها مشترک هستند
 type_buckets = {k: "" for k in ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]}
 seen_configs = {}
 
@@ -438,7 +437,7 @@ def process_single_source(line):
     is_url = line.startswith("http://") or line.startswith("https://")
     source_name = "SUB" if is_url else line.lstrip("@")
     
-    print(f"[{'URL' if is_url else 'TG'}] {line} => FETCHING...")
+    print(f"[{'URL' if is_url else 'TG'}] {line} => FETCHING...", flush=True)
     
     if is_url:
         content = fetch_subscription_url(line)
@@ -473,7 +472,6 @@ def process_single_source(line):
             dedup_key = build_dedup_key_from_raw_config(fixed_config, the_type)
             if dedup_key is None: continue
             
-            # بررسی تکراری بودن کانفیگ به صورت ایمن (Thread-safe)
             with lock:
                 if dedup_key in seen_configs:
                     continue
@@ -508,14 +506,12 @@ def process_single_source(line):
             
             source_configs_str += corrected_config + "\n"
             
-            # ثبت کانفیگ‌ها در متغیرهای اصلی با قفل
             with lock:
                 type_buckets["mix"] += corrected_config + "\n"
                 if the_type in type_buckets:
                     type_buckets[the_type] += corrected_config + "\n"
             
     if source_configs_str.strip():
-        # ساخت فایل‌های سورس به صورت لوکال (هر تسک برای سورس خودش می‌سازه، پس نیازی به قفل نیست)
         ensure_dir("subscription/source/normal")
         ensure_dir("subscription/source/base64")
         ensure_dir("subscription/source/hiddify")
@@ -530,18 +526,16 @@ def process_single_source(line):
         with open(f"subscription/source/hiddify/{safe_source_name}", "w", encoding='utf-8') as f:
             f.write(base64.b64encode((generate_hiddify_tags(f"@{safe_source_name}") + "\n" + configs_source).encode('utf-8')).decode('utf-8'))
             
-        print(f"[{source_name}] => ✅ DONE")
+        print(f"[{source_name}] => ✅ DONE", flush=True)
     else:
-        print(f"[{source_name}] => ❌ NO CONFIG FOUND")
+        print(f"[{source_name}] => ❌ NO CONFIG FOUND", flush=True)
 
 def process_sources(lines):
-    # اجرای تسک‌ها به صورت موازی (Multithreading)
-    print(f"Starting ThreadPoolExecutor with {MAX_WORKERS} workers...")
+    print(f"Starting ThreadPoolExecutor with {MAX_WORKERS} workers...", flush=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         executor.map(process_single_source, lines)
         
-    # حالا که همه تسک‌ها تمام شدند، فایل‌های خروجی اصلی (Mix، Vmess و ...) را می‌سازیم
-    print("\nAll sources processed. Saving final combination files...")
+    print("\nAll sources processed. Saving final combination files...", flush=True)
     
     ensure_dir("subscription/normal")
     ensure_dir("subscription/base64")
@@ -556,12 +550,12 @@ def process_sources(lines):
                 f.write(base64.b64encode(configs_type.encode('utf-8')).decode('utf-8'))
             with open(f"subscription/hiddify/{filename}", "w", encoding='utf-8') as f:
                 f.write(base64.b64encode((generate_hiddify_tags(filename.upper()) + "\n" + configs_type).encode('utf-8')).decode('utf-8'))
-            print(f"#{filename} => CREATED SUCCESSFULLY!!")
+            print(f"#{filename} => CREATED SUCCESSFULLY!!", flush=True)
         else:
             remove_file_in_directory("subscription/normal", filename)
             remove_file_in_directory("subscription/base64", filename)
             remove_file_in_directory("subscription/hiddify", filename)
-            print(f"#{filename} => WAS EMPTY, I REMOVED IT!")
+            print(f"#{filename} => WAS EMPTY, I REMOVED IT!", flush=True)
 
 # ================= RUN =================
 
@@ -570,10 +564,10 @@ if __name__ == "__main__":
         with open("source.conf", "r", encoding='utf-8') as f:
             lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
     except FileNotFoundError:
-        print("source.conf not found. Please create one list item per line.")
+        print("source.conf not found. Please create one list item per line.", flush=True)
         lines = []
 
     if lines:
         process_sources(lines)
     else:
-        print("source.conf is empty or not found.")
+        print("source.conf is empty or not found.", flush=True)
