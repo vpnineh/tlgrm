@@ -5,17 +5,21 @@ import time
 import base64
 import socket
 import hashlib
+import threading
 import urllib.request
 import urllib.error
 import urllib.parse
+import concurrent.futures
 from datetime import datetime, timezone, timedelta
 
 # ================= SETTINGS =================
-# قابلیت پینگ‌گیری و فیلتر کانفیگ‌ها.
 ENABLE_PING = "yes"
-
-# قابلیت استخراج کشور (تبدیل به پرچم).
 ENABLE_COUNTRY = "yes"
+MAX_WORKERS = 25  # تعداد تسک‌های همزمان
+
+# ================= THREAD LOCKS =================
+# برای جلوگیری از تداخل تسک‌های همزمان هنگام ثبت داده‌های مشترک
+lock = threading.Lock()
 
 # ================= HELPER FUNCTIONS =================
 
@@ -47,7 +51,6 @@ def is_base64(s):
         return False
 
 def is_base64_strict(s):
-    # چک کردن دقیق‌تر برای متن‌های بلند (ساب‌اسکریپشن)
     s = s.strip()
     if not s or not re.match('^[A-Za-z0-9+/=]+$', s):
         return False
@@ -76,6 +79,7 @@ def ping(host, port, timeout=1):
 
 # ================= COUNTRY CACHE =================
 ip_country_cache = {}
+cache_lock = threading.Lock()
 
 def get_country(hostname):
     if ENABLE_COUNTRY.lower() != "yes":
@@ -84,29 +88,27 @@ def get_country(hostname):
     try:
         ip = socket.gethostbyname(hostname)
     except Exception:
-        return "🌍" # در صورت عدم تشخیص آی‌پی
+        return "🌍"
 
-    if ip in ip_country_cache:
-        return ip_country_cache[ip]
+    with cache_lock:
+        if ip in ip_country_cache:
+            return ip_country_cache[ip]
 
     try:
-        # استفاده از ip-api برای تشخیص کشور
         req = urllib.request.Request(f"http://ip-api.com/json/{ip}?fields=countryCode", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode('utf-8'))
             cc = data.get("countryCode", "🌍")
             if cc and cc != "🌍":
-                # تبدیل کد کشور به اموجی پرچم
                 flag = chr(ord(cc[0]) + 127397) + chr(ord(cc[1]) + 127397)
-                ip_country_cache[ip] = flag
+                with cache_lock:
+                    ip_country_cache[ip] = flag
                 return flag
-    except urllib.error.HTTPError as e:
-        if e.code == 429: # محدودیت درخواست
-            print("Rate limit hit for IP-API.")
     except Exception:
         pass
         
-    ip_country_cache[ip] = "🌍"
+    with cache_lock:
+        ip_country_cache[ip] = "🌍"
     return "🌍"
 
 # ================= DATE & TIME =================
@@ -225,7 +227,6 @@ def extract_configs_from_text(text):
     for match in matches:
         new_matches = match.split("<br/>")
         for new_match in new_matches:
-            # تمیز کردن تگ‌های HTML در صورت وجود
             clean_match = re.sub(r"<.*?>", "", new_match)
             output.append(clean_match)
             
@@ -404,8 +405,12 @@ def generate_name(config, config_type, source, latency, country):
     latency_str = f" {latency}" if latency not in ["N/A", ""] else ""
     country_str = f" {country}" if country else ""
     
-    final_name = f"🆔{source}{country_str} {is_enc} {c_type}{net_str}{tls_str}-{unique_id_counter}{latency_str}".strip()
-    unique_id_counter += 1
+    # برای امنیت در چندنخی، شناسه یکتا رو با قفل می‌گیریم
+    with lock:
+        current_id = unique_id_counter
+        unique_id_counter += 1
+        
+    final_name = f"🆔{source}{country_str} {is_enc} {c_type}{net_str}{tls_str}-{current_id}{latency_str}".strip()
     return final_name
 
 def correct_config(config_str, config_type, source, latency="N/A", country=""):
@@ -423,107 +428,121 @@ def correct_config(config_str, config_type, source, latency="N/A", country=""):
 
 # ================= MAIN LOGIC =================
 
-def process_sources(lines):
-    type_buckets = {k: "" for k in ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]}
-    source_buckets = {}
-    seen = {}
+# متغیرهای مشترک (Shared State) که بین تسک‌ها مشترک هستند
+type_buckets = {k: "" for k in ["mix", "vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2"]}
+seen_configs = {}
+
+def process_single_source(line):
+    global type_buckets, seen_configs
     
-    for line in lines:
-        is_url = line.startswith("http://") or line.startswith("https://")
-        # تعیین نام منبع برای نمایش در اسم کانفیگ
-        source_name = "SUB" if is_url else line.lstrip("@")
+    is_url = line.startswith("http://") or line.startswith("https://")
+    source_name = "SUB" if is_url else line.lstrip("@")
+    
+    print(f"[{'URL' if is_url else 'TG'}] {line} => FETCHING...")
+    
+    if is_url:
+        content = fetch_subscription_url(line)
+        extracted = extract_configs_from_text(content)
+    else:
+        html = fetch_telegram_channel_html_pages(source_name, 2)
+        extracted = extract_configs_from_text(html)
         
-        print(f"[{'URL' if is_url else 'TG'}] {line} => PROGRESS: 0%")
+    configs = {t: [] for t in type_buckets}
+    configs["hy2"] = []
+    
+    for config_url in extracted:
+        for t in ["vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2", "hy2"]:
+            if config_url.lower().startswith(f"{t}://"):
+                if t == "hy2":
+                    configs["hysteria2"].append(config_url)
+                else:
+                    configs[t].append(config_url)
+                    
+    for k in configs: configs[k] = list(dict.fromkeys(configs[k]))
+    
+    source_configs_str = ""
         
-        if is_url:
-            content = fetch_subscription_url(line)
-            extracted = extract_configs_from_text(content)
-        else:
-            html = fetch_telegram_channel_html_pages(source_name, 2)
-            extracted = extract_configs_from_text(html)
+    for the_type, configs_array in configs.items():
+        if the_type == "hy2": continue
+        
+        for config_str in configs_array:
+            if not is_valid(config_str): continue
+            fixed_config = sanitize_config_string(config_str)
+            if not fixed_config: continue
             
-        configs = {t: [] for t in type_buckets}
-        configs["hy2"] = []
-        
-        for config_url in extracted:
-            for t in ["vmess", "vless", "trojan", "ss", "tuic", "hysteria", "hysteria2", "hy2"]:
-                if config_url.lower().startswith(f"{t}://"):
-                    if t == "hy2":
-                        configs["hysteria2"].append(config_url)
-                    else:
-                        configs[t].append(config_url)
-                        
-        for k in configs: configs[k] = list(dict.fromkeys(configs[k]))
-        print(f"[{source_name}] => PROGRESS: 50%")
-        
-        if source_name not in source_buckets:
-            source_buckets[source_name] = ""
+            dedup_key = build_dedup_key_from_raw_config(fixed_config, the_type)
+            if dedup_key is None: continue
             
-        for the_type, configs_array in configs.items():
-            if the_type == "hy2": continue
+            # بررسی تکراری بودن کانفیگ به صورت ایمن (Thread-safe)
+            with lock:
+                if dedup_key in seen_configs:
+                    continue
+                seen_configs[dedup_key] = True
             
-            for config_str in configs_array:
-                if not is_valid(config_str): continue
-                fixed_config = sanitize_config_string(config_str)
-                if not fixed_config: continue
-                
-                dedup_key = build_dedup_key_from_raw_config(fixed_config, the_type)
-                if dedup_key is None or dedup_key in seen: continue
-                seen[dedup_key] = True
-                
-                parsed_config = config_parse(fixed_config, the_type)
-                if not parsed_config: continue
-                
-                config_ip_names = {
-                    "vmess": "add", "vless": "hostname", "trojan": "hostname",
-                    "tuic": "hostname", "hysteria": "hostname", "hysteria2": "hostname",
-                    "hy2": "hostname", "ss": "server_address"
-                }
-                config_port_names = {
-                    "vmess": "port", "vless": "port", "trojan": "port",
-                    "tuic": "port", "hysteria": "port", "hysteria2": "port",
-                    "hy2": "port", "ss": "server_port"
-                }
-                
-                c_ip = parsed_config.get(config_ip_names.get(the_type), "")
-                c_port = parsed_config.get(config_port_names.get(the_type), "")
-                
-                latency = "N/A"
-                if ENABLE_PING.lower() == "yes":
-                    latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
-                    if latency not in ["down", "N/A"]:
-                        continue
-                        
-                country_flag = get_country(c_ip) if c_ip else ""
-                
-                corrected_config = correct_config(fixed_config, the_type, source_name, latency, country_flag)
-                
+            parsed_config = config_parse(fixed_config, the_type)
+            if not parsed_config: continue
+            
+            config_ip_names = {
+                "vmess": "add", "vless": "hostname", "trojan": "hostname",
+                "tuic": "hostname", "hysteria": "hostname", "hysteria2": "hostname",
+                "hy2": "hostname", "ss": "server_address"
+            }
+            config_port_names = {
+                "vmess": "port", "vless": "port", "trojan": "port",
+                "tuic": "port", "hysteria": "port", "hysteria2": "port",
+                "hy2": "port", "ss": "server_port"
+            }
+            
+            c_ip = parsed_config.get(config_ip_names.get(the_type), "")
+            c_port = parsed_config.get(config_port_names.get(the_type), "")
+            
+            latency = "N/A"
+            if ENABLE_PING.lower() == "yes":
+                latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
+                if latency not in ["down", "N/A"]:
+                    continue
+                    
+            country_flag = get_country(c_ip) if c_ip else ""
+            
+            corrected_config = correct_config(fixed_config, the_type, source_name, latency, country_flag)
+            
+            source_configs_str += corrected_config + "\n"
+            
+            # ثبت کانفیگ‌ها در متغیرهای اصلی با قفل
+            with lock:
                 type_buckets["mix"] += corrected_config + "\n"
                 if the_type in type_buckets:
                     type_buckets[the_type] += corrected_config + "\n"
-                source_buckets[source_name] += corrected_config + "\n"
-                
-        if source_buckets[source_name].strip():
-            ensure_dir("subscription/source/normal")
-            ensure_dir("subscription/source/base64")
-            ensure_dir("subscription/source/hiddify")
             
-            # ذخیره کردن فایل با نام منبع امن شده
-            safe_source_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', source_name)
+    if source_configs_str.strip():
+        # ساخت فایل‌های سورس به صورت لوکال (هر تسک برای سورس خودش می‌سازه، پس نیازی به قفل نیست)
+        ensure_dir("subscription/source/normal")
+        ensure_dir("subscription/source/base64")
+        ensure_dir("subscription/source/hiddify")
+        
+        safe_source_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', source_name)
+        configs_source = generate_update_time() + source_configs_str + generate_end_of_configuration()
+        
+        with open(f"subscription/source/normal/{safe_source_name}", "w", encoding='utf-8') as f:
+            f.write(configs_source)
+        with open(f"subscription/source/base64/{safe_source_name}", "w", encoding='utf-8') as f:
+            f.write(base64.b64encode(configs_source.encode('utf-8')).decode('utf-8'))
+        with open(f"subscription/source/hiddify/{safe_source_name}", "w", encoding='utf-8') as f:
+            f.write(base64.b64encode((generate_hiddify_tags(f"@{safe_source_name}") + "\n" + configs_source).encode('utf-8')).decode('utf-8'))
             
-            configs_source = generate_update_time() + source_buckets[source_name] + generate_end_of_configuration()
-            
-            with open(f"subscription/source/normal/{safe_source_name}", "w", encoding='utf-8') as f:
-                f.write(configs_source)
-            with open(f"subscription/source/base64/{safe_source_name}", "w", encoding='utf-8') as f:
-                f.write(base64.b64encode(configs_source.encode('utf-8')).decode('utf-8'))
-            with open(f"subscription/source/hiddify/{safe_source_name}", "w", encoding='utf-8') as f:
-                f.write(base64.b64encode((generate_hiddify_tags(f"@{safe_source_name}") + "\n" + configs_source).encode('utf-8')).decode('utf-8'))
-                
-            print(f"[{source_name}] => PROGRESS: 100%")
-        else:
-            print(f"[{source_name}] => NO CONFIG FOUND")
-            
+        print(f"[{source_name}] => ✅ DONE")
+    else:
+        print(f"[{source_name}] => ❌ NO CONFIG FOUND")
+
+def process_sources(lines):
+    # اجرای تسک‌ها به صورت موازی (Multithreading)
+    print(f"Starting ThreadPoolExecutor with {MAX_WORKERS} workers...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        executor.map(process_single_source, lines)
+        
+    # حالا که همه تسک‌ها تمام شدند، فایل‌های خروجی اصلی (Mix، Vmess و ...) را می‌سازیم
+    print("\nAll sources processed. Saving final combination files...")
+    
     ensure_dir("subscription/normal")
     ensure_dir("subscription/base64")
     ensure_dir("subscription/hiddify")
@@ -549,7 +568,6 @@ def process_sources(lines):
 if __name__ == "__main__":
     try:
         with open("source.conf", "r", encoding='utf-8') as f:
-            # خواندن خط به خط و حذف خطوط خالی یا کامنت شده (شروع با #)
             lines = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
     except FileNotFoundError:
         print("source.conf not found. Please create one list item per line.")
