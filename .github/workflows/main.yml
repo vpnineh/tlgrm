@@ -1,0 +1,43 @@
+name: Auto Update VPN Configs
+
+on:
+  workflow_dispatch: # قابلیت اجرای دستی از پنل گیتهاب
+  schedule:
+    - cron: '0/30 * * * *'
+
+jobs:
+  update-configs:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # دسترسی لازم برای کامیت و پوش کردن فایل‌ها
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run Config Scraper
+        run: |
+          # اجرای اسکریپت پایتون
+          # مطمئن شوید که فایل source.conf در کنار اسکریپت وجود دارد
+          python main.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # اضافه کردن پوشه اشتراک‌ها و فایل‌های تغییر یافته
+          git add subscription/
+          git add README.md || true
+          
+          # اگر تغییری وجود داشت کامیت کن، در غیر این صورت خطا نده
+          git commit -m "Auto Update: $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push
