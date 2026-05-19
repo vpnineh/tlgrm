@@ -14,8 +14,8 @@ from datetime import datetime, timezone, timedelta
 
 # ================= SETTINGS =================
 ENABLE_PING = "yes"          # 'yes' برای نگه داشتن فقط آی‌پی‌های فیلتر شده (تایم‌اوت)
-ENABLE_COUNTRY = "yes"      # 'yes' برای استخراج پرچم کشور
-MAX_WORKERS = 10             # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
+ENABLE_COUNTRY = "no"      # 'yes' برای استخراج پرچم کشور
+MAX_WORKERS = 25             # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
 
 # ================= THREAD LOCKS =================
 lock = threading.Lock()
