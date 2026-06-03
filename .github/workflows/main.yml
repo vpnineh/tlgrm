@@ -26,7 +26,16 @@ jobs:
         with:
           python-version: '3.x'
 
+      # 🌟 بخش اضافه شده: نصب کتابخانه‌های مورد نیاز اسکریپت
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pyTelegramBotAPI maxminddb
+
+      # 🌟 بخش اضافه شده: معرفی متغیرهای امنیتی به اسکریپت پایتون
       - name: Run Config Scraper
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           # اجرای اسکریپت پایتون
           python -u main.py
@@ -35,6 +44,9 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
+          # 🌟 بخش بسیار مهم: ذخیره فایل تاریخچه تا ربات کانفیگ تکراری ندهد
+          git add history.txt || true
           
           # اضافه کردن پوشه اشتراک‌ها و فایل‌های تغییر یافته
           git add subscription/
