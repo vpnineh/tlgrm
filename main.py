@@ -17,7 +17,9 @@ from datetime import datetime, timezone, timedelta
 # ================= SETTINGS =================
 ENABLE_PING = "no"          # 'yes': فقط کانفیگ‌های تایم‌اوت(down) / 'no': فقط کانفیگ‌های پینگ‌دار موفق
 ENABLE_COUNTRY = "no"       # 'yes' برای استخراج پرچم کشور
-MAX_WORKERS = 25             # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
+MAX_WORKERS = 25            # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
+
+MAX_POST_AGE_HOURS = 4      # ⏳ حداکثر عمر پست‌های استخراج شده از تلگرام (به ساعت). برای غیرفعال کردن عدد 0 بگذارید.
 
 AD_CHANNEL_ID = '@VPNine1'   # آیدی کانال شما برای جایگزینی
 CUSTOM_REMARK_V2RAY = '🚀@zVPN24'
@@ -99,7 +101,6 @@ def get_country(hostname):
             return ip_country_cache[ip]
 
     try:
-        # استفاده از API رایگان IPLocation (بدون نیاز به کلید و لیمیت کمتر)
         req = urllib.request.Request(f"https://api.iplocation.net/?ip={ip}", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=2) as response:
             data = json.loads(response.read().decode('utf-8'))
@@ -211,6 +212,25 @@ def fetch_telegram_channel_html_pages(channel, pages=2):
         messages = soup.find_all('div', class_=re.compile(r'tgme_widget_message\b'))
         
         for widget in messages:
+            # 🌟 سیستم فیلتر زمانی دقیق
+            if MAX_POST_AGE_HOURS > 0:
+                msg_is_recent = False
+                time_tag = widget.find('time', class_='time')
+                if time_tag and time_tag.has_attr('datetime'):
+                    post_time_str = time_tag['datetime']
+                    try:
+                        post_time = datetime.fromisoformat(post_time_str)
+                        now_utc = datetime.now(timezone.utc)
+                        time_diff = (now_utc - post_time).total_seconds()
+                        
+                        if 0 <= time_diff <= MAX_POST_AGE_HOURS * 3600:
+                            msg_is_recent = True
+                    except:
+                        pass
+                
+                if not msg_is_recent:
+                    continue
+
             clean_text = widget.get_text(separator=' ')
             clean_text = html.unescape(clean_text)
             clean_text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f]', '', clean_text)
@@ -358,7 +378,7 @@ def reparse_config(config_array, config_type):
         
     return None
 
-# 🌟 DEEP HASH SYSTEM (برای مقایسه دقیق و جلوگیری از تکراری‌های پنهان)
+# 🌟 DEEP HASH SYSTEM
 def build_dedup_key_from_raw_config(raw_config, config_type):
     clean = sanitize_config_string(raw_config)
     if not clean: return None
@@ -444,7 +464,6 @@ def correct_config(config_str, config_type, source, latency="N/A", country=""):
                 parsed[k] = re.sub(r'@[a-zA-Z0-9_]+', AD_CHANNEL_ID, v)
     else:
         if "params" in parsed:
-            # حذف Telegram
             if "telegram" in parsed["params"]: del parsed["params"]["telegram"]
             if "Telegram" in parsed["params"]: del parsed["params"]["Telegram"]
             
@@ -472,7 +491,6 @@ def process_single_source(line):
         content = fetch_subscription_url(line)
         extracted = extract_configs_from_text(content)
     else:
-        # تغییر یافته: استفاده از تابع هوشمند برای تلگرام
         extracted = fetch_telegram_channel_html_pages(source_name, 2)
         
     configs = {t: [] for t in type_buckets}
@@ -498,7 +516,6 @@ def process_single_source(line):
             fixed_config = sanitize_config_string(config_str)
             if not fixed_config: continue
             
-            # سیستم جدید دیپ هش
             dedup_key = build_dedup_key_from_raw_config(fixed_config, the_type)
             if dedup_key is None: continue
             
@@ -525,14 +542,11 @@ def process_single_source(line):
             c_port = parsed_config.get(config_port_names.get(the_type), "")
             
             latency = "N/A"
-            # 🌟 اجرای منطق دقیق و درخواست شده شما برای پینگ
             if ENABLE_PING.lower() == "yes":
-                # حالت WARMODE (نگه داشتن تایم‌اوت‌ها)
                 latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
                 if latency not in ["down", "N/A"]:
                     continue
             elif ENABLE_PING.lower() == "no":
-                # حالت عادی (فقط نگه داشتن پینگ‌های موفق)
                 latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
                 if latency in ["down", "N/A"]:
                     continue
