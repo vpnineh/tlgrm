@@ -9,13 +9,18 @@ import threading
 import urllib.request
 import urllib.error
 import urllib.parse
+import html
+from bs4 import BeautifulSoup
 import concurrent.futures
 from datetime import datetime, timezone, timedelta
 
 # ================= SETTINGS =================
-ENABLE_PING = "yes"          # 'yes' برای نگه داشتن فقط آی‌پی‌های فیلتر شده (تایم‌اوت)
-ENABLE_COUNTRY = "no"      # 'yes' برای استخراج پرچم کشور
+ENABLE_PING = "no"          # 'yes': فقط کانفیگ‌های تایم‌اوت(down) / 'no': فقط کانفیگ‌های پینگ‌دار موفق
+ENABLE_COUNTRY = "no"       # 'yes' برای استخراج پرچم کشور
 MAX_WORKERS = 25             # تعداد تسک‌های همزمان (بهترین عدد برای جلوگیری از لیمیت شدن)
+
+AD_CHANNEL_ID = '@VPNine1'   # آیدی کانال شما برای جایگزینی
+CUSTOM_REMARK_V2RAY = '🚀@zVPN24'
 
 # ================= THREAD LOCKS =================
 lock = threading.Lock()
@@ -170,20 +175,22 @@ def generate_hiddify_tags(config_type):
 
 # ================= SCRAPING & FETCHING =================
 
-def extract_min_post_id_from_telegram_html(channel, html):
+def extract_min_post_id_from_telegram_html(channel, html_content):
     ids = []
     pattern1 = re.compile(rf'data-post="{re.escape(channel)}/(\d+)"')
-    ids.extend([int(x) for x in pattern1.findall(html)])
+    ids.extend([int(x) for x in pattern1.findall(html_content)])
     if not ids:
         pattern2 = re.compile(rf'/{re.escape(channel)}/(\d+)')
-        ids.extend([int(x) for x in pattern2.findall(html)])
+        ids.extend([int(x) for x in pattern2.findall(html_content)])
     return min(ids) if ids else None
 
 def fetch_telegram_channel_html_pages(channel, pages=2):
     pages = max(1, min(10, pages))
-    all_html = ""
+    all_configs = []
     before = None
     headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    pattern_v2ray = r'(?:vless|vmess|trojan|ss|ssr|tuic|hysteria2?|socks5?|tg|http|https)://[^\s"\'<>\n]+'
     
     for p in range(1, pages + 1):
         url = f"https://t.me/s/{channel}"
@@ -192,19 +199,36 @@ def fetch_telegram_channel_html_pages(channel, pages=2):
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as response:
-                html = response.read().decode('utf-8', errors='ignore')
+                raw_html = response.read().decode('utf-8', errors='ignore')
         except Exception:
             break
             
-        if not html.strip(): break
-        all_html += f"\n<!-- PAGE {p} -->\n" + html
+        if not raw_html.strip(): break
         
-        min_id = extract_min_post_id_from_telegram_html(channel, html)
+        # پاکسازی تگ‌های مخفی <wbr> برای جلوگیری از شکسته شدن لینک‌ها
+        clean_html_str = raw_html.replace('<wbr>', '').replace('<wbr/>', '')
+        soup = BeautifulSoup(clean_html_str, 'html.parser')
+        messages = soup.find_all('div', class_=re.compile(r'tgme_widget_message\b'))
+        
+        for widget in messages:
+            clean_text = widget.get_text(separator=' ')
+            clean_text = html.unescape(clean_text)
+            clean_text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f]', '', clean_text)
+            
+            all_urls = []
+            for a_tag in widget.find_all('a'):
+                if a_tag.has_attr('href'):
+                    all_urls.append(a_tag['href'])
+                    
+            combined_data = clean_text + " \n " + " \n ".join(all_urls)
+            all_configs.extend(re.findall(pattern_v2ray, combined_data))
+            
+        min_id = extract_min_post_id_from_telegram_html(channel, raw_html)
         if min_id is None: break
         before = min_id
         time.sleep(0.5) 
         
-    return all_html
+    return list(dict.fromkeys(all_configs))
 
 def fetch_subscription_url(url):
     try:
@@ -319,7 +343,8 @@ def reparse_config(config_array, config_type):
         if config_array.get("port"):
             url += ":" + str(config_array["port"])
         if config_array.get("params"):
-            url += "?" + urllib.parse.urlencode(config_array["params"])
+            # استفاده از safe='/?:@=&,' برای جلوگیری از خرابی پارامترهای وب‌سوکت
+            url += "?" + urllib.parse.urlencode(config_array["params"], safe='/?:@=&,')
         if config_array.get("hash"):
             url += "#" + urllib.parse.quote(config_array["hash"])
         return url
@@ -333,6 +358,7 @@ def reparse_config(config_array, config_type):
         
     return None
 
+# 🌟 DEEP HASH SYSTEM (برای مقایسه دقیق و جلوگیری از تکراری‌های پنهان)
 def build_dedup_key_from_raw_config(raw_config, config_type):
     clean = sanitize_config_string(raw_config)
     if not clean: return None
@@ -340,30 +366,18 @@ def build_dedup_key_from_raw_config(raw_config, config_type):
     if not parsed or not isinstance(parsed, dict): return None
     
     if config_type == "vmess":
-        identity = {k: parsed.get(k, "") for k in ["v", "id", "aid", "add", "port", "net", "type", "tls", "sni", "host", "path", "alpn", "fp", "scy", "flow"]}
-        sorted_json = json.dumps(identity, sort_keys=True)
-        return "vmess:" + hashlib.md5(sorted_json.encode('utf-8')).hexdigest()
+        sni = parsed.get("sni", "")
+        core_str = f"vmess|{parsed.get('id', '')}|{parsed.get('add', '')}:{parsed.get('port', '')}|{sni}"
+        return hashlib.sha256(core_str.encode('utf-8')).hexdigest()
         
     elif config_type == "ss":
-        identity = {k: parsed.get(k, "") for k in ["server_address", "server_port", "encryption_method", "password"]}
-        sorted_json = json.dumps(identity, sort_keys=True)
-        return "ss:" + hashlib.md5(sorted_json.encode('utf-8')).hexdigest()
+        core_str = f"ss|{parsed.get('server_address', '')}:{parsed.get('server_port', '')}|{parsed.get('password', '')}"
+        return hashlib.sha256(core_str.encode('utf-8')).hexdigest()
         
     else:
-        params = parsed.get("params", {}).copy()
-        for key in ["name", "ps", "hash", "remark", "remarks", "title"]:
-            params.pop(key, None)
-            
-        identity = {
-            "protocol": config_type,
-            "username": parsed.get("username", ""),
-            "hostname": parsed.get("hostname", ""),
-            "port": parsed.get("port", ""),
-            "pass": parsed.get("pass", ""),
-            "params": params
-        }
-        sorted_json = json.dumps(identity, sort_keys=True)
-        return config_type + ":" + hashlib.md5(sorted_json.encode('utf-8')).hexdigest()
+        sni = parsed.get("params", {}).get("sni", "")
+        core_str = f"{config_type}|{parsed.get('username', '')}|{parsed.get('hostname', '')}:{parsed.get('port', '')}|{sni}"
+        return hashlib.sha256(core_str.encode('utf-8')).hexdigest()
 
 # ================= NAMING & FORMATTING =================
 
@@ -422,6 +436,21 @@ def correct_config(config_str, config_type, source, latency="N/A", country=""):
     
     parsed = config_parse(config_str, config_type)
     if not parsed: return config_str
+
+    # --- پاکسازی آیدی کانال‌های دیگر و پارامتر Telegram تبلیغاتی ---
+    if config_type == "vmess":
+        for k, v in parsed.items():
+            if isinstance(v, str) and k not in ['id', 'add', 'port']:
+                parsed[k] = re.sub(r'@[a-zA-Z0-9_]+', AD_CHANNEL_ID, v)
+    else:
+        if "params" in parsed:
+            # حذف Telegram
+            if "telegram" in parsed["params"]: del parsed["params"]["telegram"]
+            if "Telegram" in parsed["params"]: del parsed["params"]["Telegram"]
+            
+            for k, v in parsed["params"].items():
+                if isinstance(v, str):
+                    parsed["params"][k] = re.sub(r'@[a-zA-Z0-9_]+', AD_CHANNEL_ID, v)
     
     parsed[hash_key] = generate_name(parsed, config_type, source, latency, country)
     return reparse_config(parsed, config_type) or config_str
@@ -443,8 +472,8 @@ def process_single_source(line):
         content = fetch_subscription_url(line)
         extracted = extract_configs_from_text(content)
     else:
-        html = fetch_telegram_channel_html_pages(source_name, 2)
-        extracted = extract_configs_from_text(html)
+        # تغییر یافته: استفاده از تابع هوشمند برای تلگرام
+        extracted = fetch_telegram_channel_html_pages(source_name, 2)
         
     configs = {t: [] for t in type_buckets}
     configs["hy2"] = []
@@ -469,6 +498,7 @@ def process_single_source(line):
             fixed_config = sanitize_config_string(config_str)
             if not fixed_config: continue
             
+            # سیستم جدید دیپ هش
             dedup_key = build_dedup_key_from_raw_config(fixed_config, the_type)
             if dedup_key is None: continue
             
@@ -495,9 +525,16 @@ def process_single_source(line):
             c_port = parsed_config.get(config_port_names.get(the_type), "")
             
             latency = "N/A"
+            # 🌟 اجرای منطق دقیق و درخواست شده شما برای پینگ
             if ENABLE_PING.lower() == "yes":
+                # حالت WARMODE (نگه داشتن تایم‌اوت‌ها)
                 latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
                 if latency not in ["down", "N/A"]:
+                    continue
+            elif ENABLE_PING.lower() == "no":
+                # حالت عادی (فقط نگه داشتن پینگ‌های موفق)
+                latency = ping(c_ip, c_port, 1) if c_ip and c_port else "N/A"
+                if latency in ["down", "N/A"]:
                     continue
                     
             country_flag = get_country(c_ip) if c_ip else ""
