@@ -1,6 +1,3 @@
 vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#⚠️%20FREE%20TO%20USE!
-vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20Thu-09-MEHR-1405%20%F0%9F%95%91%2023%3A43
-trojan://humanity@88.99.189.60:443?path=/assignment&security=tls&insecure=0&host=www.calmlunch.com&type=ws&allowInsecure=0&sni=www.calmlunch.com#%F0%9F%86%94SOSkeyNET%20%F0%9F%94%92%20TR-WS-81%20103ms
-trojan://humanity@172.67.139.14:443?path=/assignment&security=tls&alpn=http/1.1&fm=%7B%22tcp%22:%5B%7B%22type%22:%22fragment%22,%22settings%22:%7B%22packets%22:%22tlshello%22,%22lengths%22:%5B%220%22,%22104%22%5D%7D%7D%5D%7D&insecure=0&host=www.volumeroot.com&type=ws&allowInsecure=0&sni=www.volumeroot.com#%F0%9F%86%94SOSkeyNET%20%F0%9F%94%92%20TR-WS-82%2015ms
-trojan://8GXLP3dEzm7T8wP5Jx0Ufg@104.19.242.85:443?path=/&security=tls&alpn=http/1.1&fm=%7B%22tcp%22:%5B%7B%22type%22:%22fragment%22,%22settings%22:%7B%22packets%22:%22tlshello%22,%22lengths%22:%5B%220%22,%22104%22%5D%7D%7D%5D%7D&insecure=0&host=quictest.burncommunity.ru&type=ws&allowInsecure=0&sni=quictest.burncommunity.ru#%F0%9F%86%94SOSkeyNET%20%F0%9F%94%92%20TR-WS-83%202ms
-trojan://humanity@78.47.146.151:443?path=/assignment&security=tls&insecure=0&host=www.pleadcourt.org&type=ws&allowInsecure=0&sni=www.pleadcourt.org#%F0%9F%86%94SOSkeyNET%20%F0%9F%94%92%20TR-WS-84%20105ms
+vless://aaacbbc-cbaa-aabc-dacb-acbacbbcaacb@127.0.0.1:1080?security=tls&type=tcp#🔄%20LATEST-UPDATE%20📅%20Fri-10-MEHR-1405%20%F0%9F%95%91%2003%3A33
+trojan://ymk9eBP4Ams3-ncYCV4kDAezUzBfkR8x@31.129.42.164:6443?security=tls&alpn=h2,http/1.1&insecure=0&headerType=none&fp=ios&type=tcp&allowInsecure=0&sni=node111.ichost.cloud#%F0%9F%86%94vpnine1%20%F0%9F%94%92%20TR-TCP-37%20118ms
